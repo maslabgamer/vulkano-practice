@@ -23,8 +23,10 @@ use winit::event::{WindowEvent, Event};
 use cgmath::{Matrix3, Rad, Matrix4, Point3, Vector3};
 use vulkano::descriptor::descriptor_set::PersistentDescriptorSet;
 use vulkano::command_buffer::{AutoCommandBufferBuilder, DynamicState};
-use std::time::Instant;
 use winit::event::VirtualKeyCode::{Space, LShift, Escape};
+
+const CUBES_PER_SIDE: usize = 32;
+const VERTICES_PER_SIDE: usize = CUBES_PER_SIDE + 1;
 
 fn main() {
     // Load basic map
@@ -33,22 +35,17 @@ fn main() {
         Err(e) => panic!("There was a problem loading the map. Can't continue: {}", e),
     };
 
-    // for (idx, row) in map.chunks.get(&[0, 0, 0]).unwrap().iter().enumerate() {
-    //     println!("idx = {}, row = {:?}", idx, row);
-    // }
-
     println!("Map chunk at [0, 0, 0] has {} elements", map.chunks.get(&[0, 0, 0]).unwrap().len());
     let distance_from_center = 20 * 16; // Width of cube times number of cubes from center
 
     let mut flat_vertices: Vec<Vertex> = vec![];
-    for z_vert in (-distance_from_center..=distance_from_center).step_by(20) {
-        for x_vert in (-distance_from_center..=distance_from_center).step_by(20) {
-            // println!("x = {}, z = {}", x_vert, z_vert);
-            flat_vertices.push(Vertex { position: [x_vert as f32, 0.0, z_vert as f32], normal: [0.0, 0.0, 0.0] })
+    for y_vert in (-distance_from_center..=distance_from_center).step_by(20) {
+        for z_vert in (-distance_from_center..=distance_from_center).step_by(20) {
+            for x_vert in (-distance_from_center..=distance_from_center).step_by(20) {
+                flat_vertices.push(Vertex { position: [x_vert as f32, y_vert as f32, z_vert as f32], normal: [0.0, 0.0, 0.0] })
+            }
         }
     }
-    // println!("flat_vertices = {:?}", flat_vertices);
-    // println!("len of flat_vertices = {}", flat_vertices.len());
 
     // Now we have vertices, figure out triangles
     // For triangles with two vertices on top, the third vertex will be the next row down with the
@@ -59,40 +56,98 @@ fn main() {
     // There will be 32 triangles of each orientation on each row
     let mut indices: Vec<u32> = Vec::new();
     // For now we're just figuring out the "top" surface
-    for tri_row_idx in 0..32 {
-        for tri_col_idx in 0..32 {
-            // Get indices for current square's vertices
-            // first triangle will be first, second and third vertices
-            // Second triangle will be fourth, third, and second vertices
-            let first_idx: usize = tri_col_idx + (33 * tri_row_idx);
-            let second_idx: usize = tri_col_idx + 1 + (33 * tri_row_idx);
-            let third_idx: usize = tri_col_idx + (33 * (tri_row_idx + 1));
-            let fourth_idx: usize = tri_col_idx + 1 + (33 * (tri_row_idx + 1));
+    let chunk_to_render = map.chunks.get(&[0, 0, 0]).unwrap();
+    for tri_layer_idx in 0..CUBES_PER_SIDE {
+        for tri_row_idx in 0..CUBES_PER_SIDE {
+            for tri_col_idx in 0..CUBES_PER_SIDE {
+                // println!("[{}, {}, {}] = {}", tri_layer_idx, tri_row_idx, tri_col_idx, chunk_to_render[CUBES_PER_SIDE * CUBES_PER_SIDE * tri_layer_idx + (tri_col_idx + (CUBES_PER_SIDE * tri_row_idx))]);
+                let chunk_val = chunk_to_render[CUBES_PER_SIDE * CUBES_PER_SIDE * tri_layer_idx + (tri_col_idx + (CUBES_PER_SIDE * tri_row_idx))];
+                if chunk_val > 0 {
+                    // Get indices for current square's vertices on top
+                    // first triangle will be first, second and third vertices
+                    // Second triangle will be fourth, third, and second vertices
+                    let first_idx: usize = VERTICES_PER_SIDE * VERTICES_PER_SIDE * tri_layer_idx + (tri_col_idx + (VERTICES_PER_SIDE * tri_row_idx));
+                    let second_idx: usize = VERTICES_PER_SIDE * VERTICES_PER_SIDE * tri_layer_idx + (tri_col_idx + 1 + (VERTICES_PER_SIDE * tri_row_idx));
+                    let third_idx: usize = VERTICES_PER_SIDE * VERTICES_PER_SIDE * tri_layer_idx + (tri_col_idx + (VERTICES_PER_SIDE * (tri_row_idx + 1)));
+                    let fourth_idx: usize = VERTICES_PER_SIDE * VERTICES_PER_SIDE * tri_layer_idx + (tri_col_idx + 1 + (VERTICES_PER_SIDE * (tri_row_idx + 1)));
 
-            let p1 = &flat_vertices[first_idx];
-            let p2 = &flat_vertices[second_idx];
-            let p3 = &flat_vertices[third_idx];
-            let vector_a = p2.clone() - p1.clone();
-            let vector_b = p3.clone() - p1.clone();
-            let normal_vec = vector_a.cross_product(&vector_b);
-            // println!("normal_vec = {:?}", normal_vec);
-            // Normals for all current triangles will be the same
-            flat_vertices[first_idx].normal = normal_vec.normal;
-            flat_vertices[second_idx].normal = normal_vec.normal;
-            flat_vertices[third_idx].normal = normal_vec.normal;
-            flat_vertices[fourth_idx].normal = normal_vec.normal;
+                    // Next two indices will let us calculate the "left" triangles
+                    // First triangle will be first, third, fifth
+                    // Second triangle will be sixth, fifth, third
+                    let fifth_idx: usize = VERTICES_PER_SIDE * VERTICES_PER_SIDE * (tri_layer_idx + 1) + (tri_col_idx + (VERTICES_PER_SIDE * tri_row_idx));
+                    let sixth_idx: usize = VERTICES_PER_SIDE * VERTICES_PER_SIDE * (tri_layer_idx + 1) + (tri_col_idx + (VERTICES_PER_SIDE * (tri_row_idx + 1)));
 
-            indices.push(first_idx as u32);
-            indices.push(second_idx as u32);
-            indices.push(third_idx as u32);
+                    // Next two indices will let us calculate the "right" triangles. As this will give
+                    // Us all eight vertices we can then easily get the "back", "front", and "bottom"
+                    // First triangle will be fourth, second, eighth
+                    // Second triangle will be seventh, eighth, second
+                    let seventh_idx = VERTICES_PER_SIDE * VERTICES_PER_SIDE * (tri_layer_idx + 1) + (tri_col_idx + 1 + (VERTICES_PER_SIDE * tri_row_idx));
+                    let eighth_idx = VERTICES_PER_SIDE * VERTICES_PER_SIDE * (tri_layer_idx + 1) + (tri_col_idx + 1 + (VERTICES_PER_SIDE * (tri_row_idx + 1)));
 
-            indices.push(fourth_idx as u32);
-            indices.push(third_idx as u32);
-            indices.push(second_idx as u32);
+                    // Push indices for top triangles
+                    indices.push(first_idx as u32);
+                    indices.push(second_idx as u32);
+                    indices.push(third_idx as u32);
+
+                    indices.push(fourth_idx as u32);
+                    indices.push(third_idx as u32);
+                    indices.push(second_idx as u32);
+
+                    // push indices for left triangles
+                    indices.push(first_idx as u32);
+                    indices.push(third_idx as u32);
+                    indices.push(fifth_idx as u32);
+
+                    indices.push(sixth_idx as u32);
+                    indices.push(fifth_idx as u32);
+                    indices.push(third_idx as u32);
+
+                    // push indices for right triangles
+                    indices.push(fourth_idx as u32);
+                    indices.push(second_idx as u32);
+                    indices.push(eighth_idx as u32);
+
+                    indices.push(seventh_idx as u32);
+                    indices.push(eighth_idx as u32);
+                    indices.push(second_idx as u32);
+
+                    // push indices for back triangles
+                    // first triangle will be first, fifth, second
+                    // second triangle will be seventh, second, fifth
+                    indices.push(first_idx as u32);
+                    indices.push(fifth_idx as u32);
+                    indices.push(second_idx as u32);
+
+                    indices.push(seventh_idx as u32);
+                    indices.push(second_idx as u32);
+                    indices.push(fifth_idx as u32);
+
+                    // push indices for front triangles
+                    // first triangle will be four, eight, three
+                    // second triangle will be six, third, eight
+                    indices.push(fourth_idx as u32);
+                    indices.push(eighth_idx as u32);
+                    indices.push(third_idx as u32);
+
+                    indices.push(sixth_idx as u32);
+                    indices.push(third_idx as u32);
+                    indices.push(eighth_idx as u32);
+
+                    // push indices for bottom triangles
+                    // first triangle will be seven, five, eight
+                    // second triangle will be six, eight, five
+                    indices.push(seventh_idx as u32);
+                    indices.push(fifth_idx as u32);
+                    indices.push(eighth_idx as u32);
+
+                    indices.push(sixth_idx as u32);
+                    indices.push(eighth_idx as u32);
+                    indices.push(fifth_idx as u32);
+                }
+            }
         }
     }
-    println!("flat_vertices = {:?}", flat_vertices);
-    println!("indices = {:?}", indices);
+    // println!("indices = {:?}", indices);
 
     // Now let's try rendering our basic triangles
     // Get required extensions to draw window
@@ -147,10 +202,10 @@ fn main() {
     // Use indices to build triangles
     let index_buffer = CpuAccessibleBuffer::from_iter(device.clone(), BufferUsage::all(), false, indices.iter().cloned()).unwrap();
 
-    let uniform_buffer = CpuBufferPool::<vs::ty::Data>::new(device.clone(), BufferUsage::all());
+    let uniform_buffer = CpuBufferPool::<vertex_shader::ty::Data>::new(device.clone(), BufferUsage::all());
 
-    let vs = vs::Shader::load(device.clone()).unwrap();
-    let fs = fs::Shader::load(device.clone()).unwrap();
+    let vs = vertex_shader::Shader::load(device.clone()).unwrap();
+    let fs = frag_shader::Shader::load(device.clone()).unwrap();
 
     // Do render pass to describe where output of graphics pipeline will go
     let render_pass = Arc::new(
@@ -188,22 +243,22 @@ fn main() {
     let mut previous_frame_end = Some(Box::new(sync::now(device.clone())) as Box<dyn GpuFuture>);
 
     // let timer = Instant::now();
-    let mut eye = Point3::new(0.3, 0.3, 1.0);
+    let mut eye = Point3::new(0.3, 0.3, 7.5);
 
     event_loop.run(move |event, _, control_flow| {
         match event {
-            Event::WindowEvent { event: WindowEvent::KeyboardInput { device_id, input, is_synthetic }, .. } => {
+            Event::WindowEvent { event: WindowEvent::KeyboardInput { input, .. }, .. } => {
                 // println!("input = {:?}", input);
                 match input.virtual_keycode {
                     Some(Escape) => *control_flow = ControlFlow::Exit,
-                    Some(Space) => eye.y += 0.5,
-                    Some(LShift) => eye.y -= 0.5,
+                    Some(Space) => eye.y -= 0.5,
+                    Some(LShift) => eye.y += 0.5,
                     _ => (),
                 }
             }
-            Event::WindowEvent { event: WindowEvent::CursorMoved { device_id, position, modifiers }, .. } => {
-                // println!("device_id = {:?}, position: {:?}", device_id, position);
-            }
+            // Event::WindowEvent { event: WindowEvent::CursorMoved { device_id, position, .. }, .. } => {
+            //     println!("device_id = {:?}, position: {:?}", device_id, position);
+            // }
             Event::WindowEvent { event: WindowEvent::CloseRequested, .. } => {
                 *control_flow = ControlFlow::Exit;
             }
@@ -235,10 +290,10 @@ fn main() {
 
                     let aspect_ratio = dimensions[0] as f32 / dimensions[1] as f32;
                     let proj = cgmath::perspective(Rad(std::f32::consts::FRAC_PI_2), aspect_ratio, 0.01, 100.0);
-                    let view = Matrix4::look_at(eye, Point3::new(0.0, 0.0, 0.0), Vector3::new(0.0, -1.0, 0.0));
+                    let view = Matrix4::look_at(eye, Point3::new(0.0, 0.0, 0.0), Vector3::new(0.0, 1.0, 0.0));
                     let scale = Matrix4::from_scale(0.01);
 
-                    let uniform_data = vs::ty::Data {
+                    let uniform_data = vertex_shader::ty::Data {
                         world: Matrix4::from(rotation).into(),
                         view: (view * scale).into(),
                         proj: proj.into(),
@@ -312,8 +367,8 @@ fn main() {
 // Called during initialization, then whenever window is resized
 fn window_size_dependent_setup(
     device: Arc<Device>,
-    vs: &vs::Shader,
-    fs: &fs::Shader,
+    vs: &vertex_shader::Shader,
+    fs: &frag_shader::Shader,
     images: &[Arc<SwapchainImage<Window>>],
     render_pass: Arc<dyn RenderPassAbstract + Send + Sync>,
 ) -> (Arc<dyn GraphicsPipelineAbstract + Send + Sync>, Vec<Arc<dyn FramebufferAbstract + Send + Sync>>) {
@@ -351,14 +406,14 @@ fn window_size_dependent_setup(
 }
 
 // Create the shaders
-mod vs {
+mod vertex_shader {
     vulkano_shaders::shader! {
         ty: "vertex",
         path: "resources/shaders/vert.glsl"
     }
 }
 
-mod fs {
+mod frag_shader {
     vulkano_shaders::shader! {
         ty: "fragment",
         path: "resources/shaders/frag.glsl"

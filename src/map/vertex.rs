@@ -1,4 +1,4 @@
-use std::ops::Sub;
+use std::ops::{Sub, Add};
 
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct Vertex {
@@ -14,20 +14,18 @@ impl Sub for Vertex {
     fn sub(self, rhs: Self) -> Self::Output {
         Vertex {
             position: [self.position[0] - rhs.position[0], self.position[1] - rhs.position[1], self.position[2] - rhs.position[2]],
-            normal: [0.0, 1.0, 0.0]
+            normal: [0.0, 0.0, 0.0]
         }
     }
 }
 
-impl Vertex {
-    pub fn cross_product(&self, v: &Vertex) -> Vertex {
+impl Add for Vertex {
+    type Output = Vertex;
+
+    fn add(self, rhs: Self) -> Self::Output {
         Vertex {
-            position: [
-                self.position[1] * v.position[2] - self.position[2] * v.position[1],
-                self.position[2] * v.position[0] - self.position[0] * v.position[2],
-                self.position[0] * v.position[1] - self.position[1] * v.position[0],
-            ],
-            normal: [0.0, 1.0, 0.0]
+            position: [self.position[0] + rhs.position[0], self.position[1] + rhs.position[1], self.position[2] + rhs.position[2]],
+            normal: [0.0; 3]
         }
     }
 }

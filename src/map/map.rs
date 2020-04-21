@@ -5,7 +5,7 @@ use std::collections::HashMap;
 #[derive(Debug)]
 pub struct Map{
     pub spawn_location: [f32; 3],
-    pub chunks: HashMap<[i32; 3], Vec<Vec<u8>>>,
+    pub chunks: HashMap<[i32; 3], Vec<u8>>,
 }
 
 impl Map {
@@ -36,7 +36,7 @@ impl Map {
         // Chunk start denoted by line starting with "c" and a set of coordinates
         // that mark the center of the chunk
         // Following coordinates values are actually attributes for each
-        let mut chunks: HashMap<[i32; 3], Vec<Vec<u8>>> = HashMap::new();
+        let mut chunks: HashMap<[i32; 3], Vec<u8>> = HashMap::new();
         let mut chunk_coords: Option<[i32; 3]> = None;
         for line in lines.into_iter() {
             if let Ok(line) = line {
@@ -56,10 +56,13 @@ impl Map {
                         Some(chunk_coords) => {
                             match chunks.get_mut(&chunk_coords) {
                                 Some(chunk) => {
-                                    let line: Vec<_> = line.split("  ")
-                                        .map(|el| el.split_ascii_whitespace()
-                                            .map(|att| att.parse::<u8>().unwrap())
-                                            .collect::<Vec<u8>>())
+                                    // let line: Vec<_> = line.split("  ")
+                                    //     .map(|el| el.split_ascii_whitespace()
+                                    //         .map(|att| att.parse::<u8>().unwrap())
+                                    //         .collect::<Vec<u8>>())
+                                    //     .collect();
+                                    let line: Vec<u8> = line.split_ascii_whitespace()
+                                        .map(|el| el.parse::<u8>().unwrap())
                                         .collect();
 
                                     chunk.extend(line);
