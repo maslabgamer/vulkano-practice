@@ -1,11 +1,18 @@
 use std::io::{BufReader, ErrorKind, BufRead};
 use std::fs::File;
 use std::collections::HashMap;
+use crate::map::chunk::Chunk;
+use vulkano::buffer::BufferUsage;
+use vulkano::buffer::CpuAccessibleBuffer;
+use std::sync::Arc;
+use vulkano::memory::pool::{PotentialDedicatedAllocation, StdMemoryPoolAlloc};
+use vulkano::device::Device;
+use crate::map::vertex::Vertex;
 
 #[derive(Debug)]
 pub struct Map{
     pub spawn_location: [f32; 3],
-    pub chunks: HashMap<[i32; 3], Vec<u8>>,
+    pub chunks: HashMap<[i32; 3], Chunk>,
 }
 
 impl Map {
@@ -36,7 +43,7 @@ impl Map {
         // Chunk start denoted by line starting with "c" and a set of coordinates
         // that mark the center of the chunk
         // Following coordinates values are actually attributes for each
-        let mut chunks: HashMap<[i32; 3], Vec<u8>> = HashMap::new();
+        let mut chunks: HashMap<[i32; 3], Chunk> = HashMap::new();
         let mut chunk_coords: Option<[i32; 3]> = None;
         for line in lines.into_iter() {
             if let Ok(line) = line {
@@ -46,30 +53,34 @@ impl Map {
                     line.next();
                     let chunk_location: Vec<i32> = line.into_iter().map(|el| el.parse::<i32>().unwrap()).collect();
                     let chunk_location = [chunk_location[0], chunk_location[1], chunk_location[2]];
-                    if !chunks.contains_key(&chunk_location) {
-                        chunks.insert(chunk_location, Vec::with_capacity(1024));
-                    }
+                    // if !chunks.contains_key(&chunk_location) {
+                    //     chunks.insert(chunk_location, vec![]);
+                    // }
                     chunk_coords = Some(chunk_location);
                 } else {
                     match chunk_coords {
-                        None => return Err("Could not parse map file due to formatting!"),
                         Some(chunk_coords) => {
-                            match chunks.get_mut(&chunk_coords) {
-                                Some(chunk) => {
-                                    // let line: Vec<_> = line.split("  ")
-                                    //     .map(|el| el.split_ascii_whitespace()
-                                    //         .map(|att| att.parse::<u8>().unwrap())
-                                    //         .collect::<Vec<u8>>())
-                                    //     .collect();
-                                    let line: Vec<u8> = line.split_ascii_whitespace()
-                                        .map(|el| el.parse::<u8>().unwrap())
-                                        .collect();
+                            let line: Vec<u8> = line.split_ascii_whitespace()
+                                .map(|el| el.parse::<u8>().unwrap())
+                                .collect();
 
-                                    chunk.extend(line);
-                                },
-                                None => return Err("Could not parse map file due to formatting!"),
-                            }
+                            let new_chunk = Chunk::new(chunk_coords, &line);
+                            chunks.insert(chunk_coords, new_chunk);
+
+                            // match chunks.get_mut(&chunk_coords) {
+                            //     Some(chunk) => {
+                            //         let line: Vec<u8> = line.split_ascii_whitespace()
+                            //             .map(|el| el.parse::<u8>().unwrap())
+                            //             .collect();
+                            //
+                            //         let new_chunk = Chunk::new(chunk_coords, &line);
+                            //
+                            //         chunk.extend(line);
+                            //     },
+                            //     None => return Err("Could not parse map file due to formatting!"),
+                            // }
                         },
+                        None => return Err("Could not parse map file due to formatting!"),
                     }
                 }
             }
@@ -90,5 +101,22 @@ impl Map {
 
     fn strip_comments(line: &str) -> &str {
         line.split("#").next().unwrap().trim()
+    }
+
+    // Note: This renders everything
+    // May want to play around with more efficiently built algorithms later
+    pub fn render_map(&self, device: &Arc<Device>) -> (Vec<Arc<CpuAccessibleBuffer<[Vertex], PotentialDedicatedAllocation<StdMemoryPoolAlloc>>>>, Vec<Arc<CpuAccessibleBuffer<[u32], PotentialDedicatedAllocation<StdMemoryPoolAlloc>>>>) {
+        let mut vertex_buffers = vec![];
+        let mut index_buffers = vec![];
+
+        for chunk in self.chunks.values() {
+            let vertex_buffer = CpuAccessibleBuffer::from_iter(device.clone(), BufferUsage::all(), false, chunk.chunk_vertices.iter().cloned()).unwrap();
+            vertex_buffers.push(vertex_buffer);
+
+            let index_buffer = CpuAccessibleBuffer::from_iter(device.clone(), BufferUsage::all(), false, chunk.get_indices().iter().cloned()).unwrap();
+            index_buffers.push(index_buffer);
+        }
+
+        (vertex_buffers, index_buffers)
     }
 }
