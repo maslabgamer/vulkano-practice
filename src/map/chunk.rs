@@ -97,18 +97,6 @@ impl Chunk {
                             sixth_idx, eighth_idx, fifth_idx,
                         ]
                     });
-
-                    // push indices for bottom triangles
-                    // first triangle will be seven, five, eight
-                    // second triangle will be six, eight, five
-                    // indices.push(seventh_idx as u32);
-                    // indices.push(fifth_idx as u32);
-                    // indices.push(eighth_idx as u32);
-                    //
-                    // indices.push(sixth_idx as u32);
-                    // indices.push(eighth_idx as u32);
-                    // indices.push(fifth_idx as u32);
-                    // }
                 }
             }
         }
@@ -117,7 +105,7 @@ impl Chunk {
     }
 
     pub fn get_indices(&self) -> Vec<u32> {
-        let mut indices: Vec<u32> = Vec::with_capacity((CUBES_PER_SIDE * CUBES_PER_SIDE * CUBES_PER_SIDE) as usize);
+        let mut indices: Vec<u32> = Vec::with_capacity((CUBES_PER_SIDE * CUBES_PER_SIDE * CUBES_PER_SIDE * 36) as usize);
         for cube in self.cubes.iter() {
             indices.extend(&cube.render_vertices());
         }
