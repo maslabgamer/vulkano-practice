@@ -1,3 +1,5 @@
+#![feature(clamp)]
+
 mod map;
 
 use crate::map::map::Map;
@@ -20,11 +22,11 @@ use vulkano::sync;
 use vulkano::sync::{GpuFuture, FlushError};
 use vulkano::swapchain;
 use winit::event::{WindowEvent, Event};
-use cgmath::{Matrix3, Rad, Matrix4, Point3, Vector3};
+use cgmath::{Matrix3, Rad, Matrix4, Point3, Vector3, Vector4};
 use vulkano::descriptor::descriptor_set::PersistentDescriptorSet;
 use vulkano::command_buffer::{AutoCommandBufferBuilder, DynamicState};
 use winit::event::VirtualKeyCode::{Space, LShift, Escape};
-use winit::dpi::LogicalSize;
+use winit::dpi::{LogicalSize, PhysicalPosition};
 use std::time::Instant;
 
 fn main() {
@@ -51,6 +53,11 @@ fn main() {
     let event_loop = EventLoop::new();
     let surface = WindowBuilder::new().with_title("ChunkRenderer").build_vk_surface(&event_loop, instance.clone()).unwrap();
     surface.window().set_inner_size(LogicalSize::new(1920, 1080));
+    match surface.window().set_cursor_grab(true) {
+        Ok(_) => println!("Got cursor lock on window."),
+        Err(_) => panic!("Couldn't get cursor lock on window!"),
+    }
+    surface.window().set_cursor_visible(false); // Since we assume window is in focus by default
 
     // Pick a GPU queue to execute draw commands
     // Devices can provide multiple queues to execute commands in parallel
@@ -68,6 +75,7 @@ fn main() {
 
     // Create a swapchain
     let dimensions: [u32; 2] = surface.window().inner_size().into();
+    println!("Dimensions are: {:?}", dimensions);
     let (mut swapchain, images) = {
         // Query the capabilities of the surface
         let caps = surface.capabilities(physical).unwrap();
@@ -84,9 +92,7 @@ fn main() {
                        PresentMode::Fifo, FullscreenExclusive::Default, true, ColorSpace::SrgbNonLinear).unwrap()
     };
 
-    let start = Instant::now();
     let (vertex_buffers, index_buffers) = map.render_map(&device);
-    println!("Time = {:?}", start.elapsed().as_millis());
 
     let uniform_buffer = CpuBufferPool::<vertex_shader::ty::Data>::new(device.clone(), BufferUsage::all());
 
@@ -130,8 +136,21 @@ fn main() {
 
     // let timer = Instant::now();
     let mut eye = Point3::new(0.3, 0.3, 25.0);
+    let mut eye_yaw: f32 = 0.0;
+    let mut eye_pitch: f32 = 0.0;
+
+    // Set default position for mouse
+    let mut default_mouse_position = PhysicalPosition { x: dimensions[0] / 2, y: dimensions[1] / 2 };
+    let sensitivity = 1.0;
+
+    // Set up elapsed time timer
+    let mut timer = Instant::now();
+
+    let mut window_is_focused = true; // Assume focused at startup
 
     event_loop.run(move |event, _, control_flow| {
+        let delta_time = timer.elapsed().as_nanos() as f64 / 1_000_000_000.0;
+        timer = Instant::now();
         match event {
             Event::WindowEvent { event: WindowEvent::KeyboardInput { input, .. }, .. } => {
                 // println!("input = {:?}", input);
@@ -142,9 +161,25 @@ fn main() {
                     _ => (),
                 }
             }
-            // Event::WindowEvent { event: WindowEvent::CursorMoved { device_id, position, .. }, .. } => {
-            //     println!("device_id = {:?}, position: {:?}", device_id, position);
-            // }
+            Event::WindowEvent { event: WindowEvent::Focused(_0), .. } => {
+                window_is_focused = _0;
+                surface.window().set_cursor_visible(!window_is_focused);
+            }
+            Event::WindowEvent { event: WindowEvent::CursorMoved { position, .. }, .. } => {
+                if window_is_focused {
+                    let x_difference = position.x - default_mouse_position.x as f64;
+                    let y_difference = position.y - default_mouse_position.y as f64;
+
+                    eye_yaw += (x_difference * delta_time * sensitivity) as f32;
+                    eye_pitch += (y_difference * delta_time * sensitivity) as f32;
+                    eye_pitch = eye_pitch.clamp(-(std::f32::consts::FRAC_PI_2 - 0.00001), std::f32::consts::FRAC_PI_2 - 0.00001);
+
+                    match surface.window().set_cursor_position(default_mouse_position) {
+                        Ok(_) => {}
+                        Err(_) => panic!("Could not set cursor position!"),
+                    }
+                }
+            }
             Event::WindowEvent { event: WindowEvent::CloseRequested, .. } => {
                 *control_flow = ControlFlow::Exit;
             }
@@ -158,6 +193,7 @@ fn main() {
                 // Whenever window resizes we need to recreate everything dependent on the window size.
                 if recreate_swapchain {
                     let dimensions: [u32; 2] = surface.window().inner_size().into();
+                    default_mouse_position = PhysicalPosition { x: dimensions[0] / 2, y: dimensions[1] / 2 };
                     let (new_swapchain, new_images) = match swapchain.recreate_with_dimensions(dimensions) {
                         Ok(r) => r,
                         Err(SwapchainCreationError::UnsupportedDimensions) => return,
@@ -176,7 +212,24 @@ fn main() {
 
                     let aspect_ratio = dimensions[0] as f32 / dimensions[1] as f32;
                     let proj = cgmath::perspective(Rad(std::f32::consts::FRAC_PI_2), aspect_ratio, 0.01, 100.0);
-                    let view = Matrix4::look_at(eye, Point3::new(0.0, 0.0, 0.0), Vector3::new(0.0, -1.0, 0.0));
+
+                    // Create our rotation matrices
+                    let horizontal_rotation = Matrix4::from_angle_y(Rad(eye_yaw));
+                    let vertical_rotation = Matrix4::from_angle_x(Rad(eye_pitch));
+                    let camera_rotation = horizontal_rotation * vertical_rotation;
+
+                    // Target is basically "right in front" of the camera
+                    let target = Vector4::new(0.0, 0.0, 1.0, 1.0);
+
+                    // Multiply target by the rotation vector.
+                    let view_rotation: Vector4<f32> = camera_rotation * target;
+
+                    // Since we're rotating the "look at" vector around the origin, we need to move
+                    // back to the "player"
+                    let final_target = Point3::new(view_rotation.x + eye.x, view_rotation.y + eye.y, view_rotation.z + eye.z);
+
+                    let view = Matrix4::look_at(eye, final_target, Vector3::new(0.0, -1.0, 0.0));
+
                     let scale = Matrix4::from_scale(0.01);
 
                     let uniform_data = vertex_shader::ty::Data {
