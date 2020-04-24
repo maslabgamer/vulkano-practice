@@ -13,3 +13,6 @@ vulkano-shaders = "0.18.0"
 winit = "0.22"
 
 cgmath = "0.17"
+
+[profile.dev]
+opt-level = 3
