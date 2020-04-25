@@ -25,9 +25,11 @@ use winit::event::{WindowEvent, Event};
 use cgmath::{Matrix3, Rad, Matrix4, Point3, Vector3, Vector4};
 use vulkano::descriptor::descriptor_set::PersistentDescriptorSet;
 use vulkano::command_buffer::{AutoCommandBufferBuilder, DynamicState};
-use winit::event::VirtualKeyCode::{Space, LShift, Escape};
+use winit::event::VirtualKeyCode::{Space, LShift, Escape, W, A, S, D};
 use winit::dpi::{LogicalSize, PhysicalPosition};
 use std::time::Instant;
+
+const UP_VECTOR: Vector3<f32> = Vector3::new(0.0, -1.0, 0.0);
 
 fn main() {
     println!("Loading map...");
@@ -139,14 +141,24 @@ fn main() {
     let mut eye_yaw: f32 = 0.0;
     let mut eye_pitch: f32 = 0.0;
 
+    let mut view_rotation: Vector4<f32> = Vector4 {
+        x: 0.0,
+        y: 0.0,
+        z: 1.0,
+        w: 1.0
+    };
+
+    // let mut camera_look: Vector3<f32> = view_rotation.truncate();
+
     // Set default position for mouse
     let mut default_mouse_position = PhysicalPosition { x: dimensions[0] / 2, y: dimensions[1] / 2 };
-    let sensitivity = 1.0;
+    let sensitivity = 1.3;
 
     // Set up elapsed time timer
     let mut timer = Instant::now();
 
     let mut window_is_focused = true; // Assume focused at startup
+    let mut button_pressed: usize = 0;
 
     event_loop.run(move |event, _, control_flow| {
         let delta_time = timer.elapsed().as_nanos() as f64 / 1_000_000_000.0;
@@ -154,8 +166,15 @@ fn main() {
         match event {
             Event::WindowEvent { event: WindowEvent::KeyboardInput { input, .. }, .. } => {
                 // println!("input = {:?}", input);
+                let forward: Vector4<f32> = view_rotation;
+                let right = view_rotation.truncate().cross(UP_VECTOR);
+
                 match input.virtual_keycode {
                     Some(Escape) => *control_flow = ControlFlow::Exit,
+                    Some(W) => eye += forward.truncate(),
+                    Some(S) => eye -= forward.truncate(),
+                    Some(A) => eye -= right,
+                    Some(D) => eye += right,
                     Some(Space) => eye.y += 0.5,
                     Some(LShift) => eye.y -= 0.5,
                     _ => (),
@@ -172,6 +191,9 @@ fn main() {
 
                     eye_yaw += (x_difference * delta_time * sensitivity) as f32;
                     eye_pitch += (y_difference * delta_time * sensitivity) as f32;
+                    // If I don't do this the world view disappears as it combines poorly with the
+                    // "up" vector
+                    // I fucking hate that this works and it's hacky as hell
                     eye_pitch = eye_pitch.clamp(-(std::f32::consts::FRAC_PI_2 - 0.00001), std::f32::consts::FRAC_PI_2 - 0.00001);
 
                     match surface.window().set_cursor_position(default_mouse_position) {
@@ -222,13 +244,13 @@ fn main() {
                     let target = Vector4::new(0.0, 0.0, 1.0, 1.0);
 
                     // Multiply target by the rotation vector.
-                    let view_rotation: Vector4<f32> = camera_rotation * target;
+                    view_rotation = camera_rotation * target;
 
                     // Since we're rotating the "look at" vector around the origin, we need to move
                     // back to the "player"
-                    let final_target = Point3::new(view_rotation.x + eye.x, view_rotation.y + eye.y, view_rotation.z + eye.z);
+                    // camera_look = Vector3::new(view_rotation.x + eye.x, view_rotation.y + eye.y, view_rotation.z + eye.z);
 
-                    let view = Matrix4::look_at(eye, final_target, Vector3::new(0.0, -1.0, 0.0));
+                    let view = Matrix4::look_at_dir(eye, view_rotation.truncate(), UP_VECTOR);
 
                     let scale = Matrix4::from_scale(0.01);
 
