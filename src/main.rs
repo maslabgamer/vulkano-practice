@@ -1,9 +1,11 @@
 #![feature(clamp)]
 
 mod map;
+mod player;
 
 use crate::map::map::Map;
 use crate::map::vertex::Vertex;
+use crate::player::Player;
 use vulkano::instance::{Instance, PhysicalDevice};
 use vulkano_win::VkSurfaceBuild;
 use winit::event_loop::{EventLoop, ControlFlow};
@@ -25,9 +27,9 @@ use winit::event::{WindowEvent, Event};
 use cgmath::{Matrix3, Rad, Matrix4, Point3, Vector3, Vector4};
 use vulkano::descriptor::descriptor_set::PersistentDescriptorSet;
 use vulkano::command_buffer::{AutoCommandBufferBuilder, DynamicState};
-use winit::event::VirtualKeyCode::{Space, LShift, Escape, W, A, S, D};
 use winit::dpi::{LogicalSize, PhysicalPosition};
 use std::time::Instant;
+use device_query::{DeviceState, DeviceQuery, Keycode};
 
 const UP_VECTOR: Vector3<f32> = Vector3::new(0.0, -1.0, 0.0);
 
@@ -136,10 +138,15 @@ fn main() {
     // Hold a place to store the submission of the previous frame
     let mut previous_frame_end = Some(Box::new(sync::now(device.clone())) as Box<dyn GpuFuture>);
 
-    // let timer = Instant::now();
-    let mut eye = Point3::new(0.3, 0.3, 25.0);
-    let mut eye_yaw: f32 = 0.0;
-    let mut eye_pitch: f32 = 0.0;
+    // Set up keybaord handler
+    let device_state = DeviceState::new();
+    let mut input_timer = Instant::now();
+
+    let mut player = Player {
+        location: Point3::new(0.3, 35.0, 25.0),
+        yaw: 0.0,
+        pitch: 0.0
+    };
 
     let mut view_rotation: Vector4<f32> = Vector4 {
         x: 0.0,
@@ -147,8 +154,6 @@ fn main() {
         z: 1.0,
         w: 1.0
     };
-
-    // let mut camera_look: Vector3<f32> = view_rotation.truncate();
 
     // Set default position for mouse
     let mut default_mouse_position = PhysicalPosition { x: dimensions[0] / 2, y: dimensions[1] / 2 };
@@ -158,28 +163,38 @@ fn main() {
     let mut timer = Instant::now();
 
     let mut window_is_focused = true; // Assume focused at startup
-    let mut button_pressed: usize = 0;
 
+    // Main game loop
     event_loop.run(move |event, _, control_flow| {
-        let delta_time = timer.elapsed().as_nanos() as f64 / 1_000_000_000.0;
-        timer = Instant::now();
-        match event {
-            Event::WindowEvent { event: WindowEvent::KeyboardInput { input, .. }, .. } => {
-                // println!("input = {:?}", input);
+        *control_flow = ControlFlow::Poll;
+
+        // Handle input
+        if input_timer.elapsed().as_millis() > 5 {
+            // Get keys
+            let keys: Vec<Keycode> = device_state.get_keys();
+            if !keys.is_empty() {
                 let forward: Vector4<f32> = view_rotation;
                 let right = view_rotation.truncate().cross(UP_VECTOR);
 
-                match input.virtual_keycode {
-                    Some(Escape) => *control_flow = ControlFlow::Exit,
-                    Some(W) => eye += forward.truncate(),
-                    Some(S) => eye -= forward.truncate(),
-                    Some(A) => eye -= right,
-                    Some(D) => eye += right,
-                    Some(Space) => eye.y += 0.5,
-                    Some(LShift) => eye.y -= 0.5,
-                    _ => (),
+                for key in keys {
+                    match key {
+                        Keycode::Escape => *control_flow = ControlFlow::Exit,
+                        Keycode::W => player.location += forward.truncate(),
+                        Keycode::S => player.location -= forward.truncate(),
+                        Keycode::A => player.location -= right,
+                        Keycode::D => player.location += right,
+                        Keycode::Space => player.location.y += 0.5,
+                        Keycode::LShift => player.location.y -= 0.5,
+                        _ => {},
+                    }
                 }
+                input_timer = Instant::now();
             }
+        }
+
+        let delta_time = timer.elapsed().as_nanos() as f64 / 1_000_000_000.0;
+        timer = Instant::now();
+        match event {
             Event::WindowEvent { event: WindowEvent::Focused(_0), .. } => {
                 window_is_focused = _0;
                 surface.window().set_cursor_visible(!window_is_focused);
@@ -189,12 +204,12 @@ fn main() {
                     let x_difference = position.x - default_mouse_position.x as f64;
                     let y_difference = position.y - default_mouse_position.y as f64;
 
-                    eye_yaw += (x_difference * delta_time * sensitivity) as f32;
-                    eye_pitch += (y_difference * delta_time * sensitivity) as f32;
+                    player.yaw += (x_difference * delta_time * sensitivity) as f32;
+                    player.pitch += (y_difference * delta_time * sensitivity) as f32;
                     // If I don't do this the world view disappears as it combines poorly with the
                     // "up" vector
                     // I fucking hate that this works and it's hacky as hell
-                    eye_pitch = eye_pitch.clamp(-(std::f32::consts::FRAC_PI_2 - 0.00001), std::f32::consts::FRAC_PI_2 - 0.00001);
+                    player.pitch = player.pitch.clamp(-(std::f32::consts::FRAC_PI_2 - 0.00001), std::f32::consts::FRAC_PI_2 - 0.00001);
 
                     match surface.window().set_cursor_position(default_mouse_position) {
                         Ok(_) => {}
@@ -236,8 +251,8 @@ fn main() {
                     let proj = cgmath::perspective(Rad(std::f32::consts::FRAC_PI_2), aspect_ratio, 0.01, 100.0);
 
                     // Create our rotation matrices
-                    let horizontal_rotation = Matrix4::from_angle_y(Rad(eye_yaw));
-                    let vertical_rotation = Matrix4::from_angle_x(Rad(eye_pitch));
+                    let horizontal_rotation = Matrix4::from_angle_y(Rad(player.yaw));
+                    let vertical_rotation = Matrix4::from_angle_x(Rad(player.pitch));
                     let camera_rotation = horizontal_rotation * vertical_rotation;
 
                     // Target is basically "right in front" of the camera
@@ -246,13 +261,9 @@ fn main() {
                     // Multiply target by the rotation vector.
                     view_rotation = camera_rotation * target;
 
-                    // Since we're rotating the "look at" vector around the origin, we need to move
-                    // back to the "player"
-                    // camera_look = Vector3::new(view_rotation.x + eye.x, view_rotation.y + eye.y, view_rotation.z + eye.z);
+                    let view = Matrix4::look_at_dir(player.location, view_rotation.truncate(), UP_VECTOR);
 
-                    let view = Matrix4::look_at_dir(eye, view_rotation.truncate(), UP_VECTOR);
-
-                    let scale = Matrix4::from_scale(0.01);
+                    let scale = Matrix4::from_scale(0.10);
 
                     let uniform_data = vertex_shader::ty::Data {
                         world: Matrix4::from(rotation).into(),
@@ -288,7 +299,7 @@ fn main() {
                 let mut command_buffer = AutoCommandBufferBuilder::primary_one_time_submit(device.clone(), queue.family()).unwrap()
                     .begin_render_pass(framebuffers[image_num].clone(), false,
                                        vec![
-                                           [0.0, 0.0, 1.0, 1.0].into(),
+                                           [1.0, 1.0, 1.0, 1.0].into(),
                                            1f32.into()
                                        ]).unwrap();
                 for (vertex_buffer, index_buffer) in vertex_buffers.iter().zip(index_buffers.iter()) {
@@ -299,7 +310,8 @@ fn main() {
                         index_buffer.clone(), set.clone(), (),
                     ).unwrap();
                 }
-                let command_buffer = command_buffer.end_render_pass().unwrap().build().unwrap();
+                let command_buffer = command_buffer.end_render_pass().unwrap()
+                    .build().unwrap();
 
                 let future = previous_frame_end.take().unwrap()
                     .join(acquire_future)
