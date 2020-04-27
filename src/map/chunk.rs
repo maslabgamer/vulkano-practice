@@ -35,7 +35,6 @@ impl Chunk {
             }
         }
 
-
         // Now we have vertices, figure out triangles
         // For triangles with two vertices on top, the third vertex will be the next row down with the
         // same x coordinate as the left hand vertex
