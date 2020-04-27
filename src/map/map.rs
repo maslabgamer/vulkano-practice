@@ -8,6 +8,7 @@ use std::sync::Arc;
 use vulkano::memory::pool::{PotentialDedicatedAllocation, StdMemoryPoolAlloc};
 use vulkano::device::Device;
 use crate::map::vertex::Vertex;
+use std::time::Instant;
 
 #[derive(Debug)]
 pub struct Map{
@@ -66,19 +67,6 @@ impl Map {
 
                             let new_chunk = Chunk::new(chunk_coords, &line);
                             chunks.insert(chunk_coords, new_chunk);
-
-                            // match chunks.get_mut(&chunk_coords) {
-                            //     Some(chunk) => {
-                            //         let line: Vec<u8> = line.split_ascii_whitespace()
-                            //             .map(|el| el.parse::<u8>().unwrap())
-                            //             .collect();
-                            //
-                            //         let new_chunk = Chunk::new(chunk_coords, &line);
-                            //
-                            //         chunk.extend(line);
-                            //     },
-                            //     None => return Err("Could not parse map file due to formatting!"),
-                            // }
                         },
                         None => return Err("Could not parse map file due to formatting!"),
                     }
@@ -109,6 +97,7 @@ impl Map {
         let mut vertex_buffers = vec![];
         let mut index_buffers = vec![];
 
+        let start = Instant::now();
         for chunk in self.chunks.values() {
             let vertex_buffer = CpuAccessibleBuffer::from_iter(device.clone(), BufferUsage::all(), false, chunk.chunk_vertices.iter().cloned()).unwrap();
             vertex_buffers.push(vertex_buffer);
@@ -116,6 +105,7 @@ impl Map {
             let index_buffer = CpuAccessibleBuffer::from_iter(device.clone(), BufferUsage::all(), false, chunk.get_indices().iter().cloned()).unwrap();
             index_buffers.push(index_buffer);
         }
+        println!("Marshalling took {:?}", start.elapsed());
 
         (vertex_buffers, index_buffers)
     }
