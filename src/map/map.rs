@@ -54,9 +54,7 @@ impl Map {
                     line.next();
                     let chunk_location: Vec<i32> = line.into_iter().map(|el| el.parse::<i32>().unwrap()).collect();
                     let chunk_location = [chunk_location[0], chunk_location[1], chunk_location[2]];
-                    // if !chunks.contains_key(&chunk_location) {
-                    //     chunks.insert(chunk_location, vec![]);
-                    // }
+
                     chunk_coords = Some(chunk_location);
                 } else {
                     match chunk_coords {
