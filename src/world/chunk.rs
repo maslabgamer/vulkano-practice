@@ -1,5 +1,5 @@
-use crate::map::vertex::Vertex;
-use crate::map::cube::Cube;
+use crate::world::vertex::Vertex;
+use crate::world::cube::Cube;
 
 const CUBES_PER_SIDE: u32 = 32;
 const VERTICES_PER_SIDE: u32 = CUBES_PER_SIDE + 1;
@@ -10,14 +10,15 @@ const DISTANCE_FROM_CENTER: i32 = 20 * 16; // Width of cube times number of cube
 pub struct Chunk {
     pub chunk_attrs: Vec<u8>,
     pub chunk_vertices: Vec<Vertex>,
+    pub chunk_center_coordinates: [f32; 3],
     cubes: Vec<Cube>,
 }
 
 impl Chunk {
-    pub fn new(chunk_coordinates: [i32; 3], chunk_attrs: &Vec<u8>) -> Chunk {
-        let x_offset = chunk_coordinates[0];
-        let y_offset = chunk_coordinates[1];
-        let z_offset = chunk_coordinates[2];
+    pub fn new(chunk_coordinates: [i32; 3], chunk_attrs: &Vec<u8>, world_scale: f32) -> Chunk {
+        let x_offset = chunk_coordinates[0] * OFFSET_MULTIPLIER;
+        let y_offset = chunk_coordinates[1] * OFFSET_MULTIPLIER;
+        let z_offset = chunk_coordinates[2] * OFFSET_MULTIPLIER;
 
         let mut chunk_vertices: Vec<Vertex> = vec![];
         for y_vert in (-DISTANCE_FROM_CENTER..=DISTANCE_FROM_CENTER).step_by(20) {
@@ -25,9 +26,9 @@ impl Chunk {
                 for x_vert in (-DISTANCE_FROM_CENTER..=DISTANCE_FROM_CENTER).step_by(20) {
                     chunk_vertices.push(Vertex {
                         position: [
-                            (x_vert + (x_offset * OFFSET_MULTIPLIER)) as f32,
-                            (y_vert + (y_offset * OFFSET_MULTIPLIER)) as f32,
-                            (z_vert + (z_offset * OFFSET_MULTIPLIER)) as f32
+                            (x_vert + x_offset) as f32,
+                            (y_vert + y_offset) as f32,
+                            (z_vert + z_offset) as f32
                         ],
                         normal: [0.0, 0.0, 0.0],
                     })
@@ -45,7 +46,7 @@ impl Chunk {
         let mut cubes: Vec<Cube> = vec![];
         // let mut indices: Vec<u32> = Vec::new();
         // For now we're just figuring out the "top" surface
-        // let chunk_to_render = map.chunks.get(&chunk_coordinates).unwrap();
+        // let chunk_to_render = world.chunks.get(&chunk_coordinates).unwrap();
         for tri_layer_idx in 0..CUBES_PER_SIDE {
             for tri_row_idx in 0..CUBES_PER_SIDE {
                 for tri_col_idx in 0..CUBES_PER_SIDE {
@@ -100,7 +101,12 @@ impl Chunk {
             }
         }
 
-        Chunk { chunk_attrs: chunk_attrs.clone(), cubes, chunk_vertices }
+        Chunk {
+            chunk_attrs: chunk_attrs.clone(),
+            cubes,
+            chunk_vertices,
+            chunk_center_coordinates: [x_offset as f32 * world_scale, y_offset as f32 * world_scale, z_offset as f32 * world_scale]
+        }
     }
 
     pub fn get_indices(&self) -> Vec<u32> {
