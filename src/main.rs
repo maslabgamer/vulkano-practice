@@ -1,10 +1,11 @@
 #![feature(clamp)]
 
-mod map;
+mod world;
+mod options;
 mod player;
 
-use crate::map::map::Map;
-use crate::map::vertex::Vertex;
+use crate::world::map::Map;
+use crate::world::vertex::Vertex;
 use crate::player::Player;
 use vulkano::instance::{Instance, PhysicalDevice};
 use vulkano_win::VkSurfaceBuild;
@@ -30,17 +31,24 @@ use vulkano::command_buffer::{AutoCommandBufferBuilder, DynamicState};
 use winit::dpi::{LogicalSize, PhysicalPosition};
 use std::time::Instant;
 use device_query::{DeviceState, DeviceQuery, Keycode};
+use crate::options::InternalConfig;
 
 const UP_VECTOR: Vector3<f32> = Vector3::new(0.0, -1.0, 0.0);
 
 fn main() {
-    println!("Loading map...");
-    // Load basic map
-    let map = match Map::load_from_file("resources/map_file.map") {
+    // Load engine configuration
+    let internal_config: InternalConfig = InternalConfig::load_internal_config("resources/settings.toml");
+    println!("internal_config = {:?}", internal_config);
+
+    let world_scale = internal_config.engine.scale;
+
+    println!("Loading world...");
+    // Load basic world
+    let map = match Map::load_from_file("resources/map_file.map", world_scale) {
         Ok(map) => map,
-        Err(e) => panic!("There was a problem loading the map. Can't continue: {}", e),
+        Err(e) => panic!("There was a problem loading the world. Can't continue: {}", e),
     };
-    println!("map keys are: {:?}", map.chunks.keys());
+    println!("world keys are: {:?}", map.chunks.keys());
 
     // Now let's try rendering our basic triangles
     // Get required extensions to draw window
@@ -164,9 +172,17 @@ fn main() {
 
     let mut window_is_focused = true; // Assume focused at startup
 
+    let mut debug_timer = Instant::now();
+
     // Main game loop
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Poll;
+
+        if debug_timer.elapsed().as_secs() > 1 {
+            println!("player position = {:?}", player.location);
+
+            debug_timer = Instant::now();
+        }
 
         // Handle input
         if input_timer.elapsed().as_millis() > 5 {
@@ -183,8 +199,8 @@ fn main() {
                         Keycode::S => player.location -= forward.truncate(),
                         Keycode::A => player.location -= right,
                         Keycode::D => player.location += right,
-                        Keycode::Space => player.location.y += 0.5,
-                        Keycode::LShift => player.location.y -= 0.5,
+                        Keycode::Space => player.move_up(0.5),
+                        Keycode::LShift => player.move_down(0.5),
                         _ => {},
                     }
                 }
@@ -192,11 +208,13 @@ fn main() {
             }
         }
 
+        // Update delta_time
         let delta_time = timer.elapsed().as_nanos() as f64 / 1_000_000_000.0;
         timer = Instant::now();
+
         match event {
-            Event::WindowEvent { event: WindowEvent::Focused(_0), .. } => {
-                window_is_focused = _0;
+            Event::WindowEvent { event: WindowEvent::Focused(in_focus), .. } => {
+                window_is_focused = in_focus;
                 surface.window().set_cursor_visible(!window_is_focused);
             }
             Event::WindowEvent { event: WindowEvent::CursorMoved { position, .. }, .. } => {
@@ -248,7 +266,7 @@ fn main() {
                     let rotation = Matrix3::from_angle_y(Rad(0.0));
 
                     let aspect_ratio = dimensions[0] as f32 / dimensions[1] as f32;
-                    let proj = cgmath::perspective(Rad(std::f32::consts::FRAC_PI_2), aspect_ratio, 0.01, 100.0);
+                    let proj = cgmath::perspective(Rad(std::f32::consts::FRAC_PI_2), aspect_ratio, 0.01, 1000.0);
 
                     // Create our rotation matrices
                     let horizontal_rotation = Matrix4::from_angle_y(Rad(player.yaw));
@@ -263,7 +281,7 @@ fn main() {
 
                     let view = Matrix4::look_at_dir(player.location, view_rotation.truncate(), UP_VECTOR);
 
-                    let scale = Matrix4::from_scale(0.10);
+                    let scale = Matrix4::from_scale(world_scale);
 
                     let uniform_data = vertex_shader::ty::Data {
                         world: Matrix4::from(rotation).into(),

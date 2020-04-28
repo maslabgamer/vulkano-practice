@@ -1,13 +1,13 @@
 use std::io::{BufReader, ErrorKind, BufRead};
 use std::fs::File;
 use std::collections::HashMap;
-use crate::map::chunk::Chunk;
+use crate::world::chunk::Chunk;
 use vulkano::buffer::BufferUsage;
 use vulkano::buffer::CpuAccessibleBuffer;
 use std::sync::Arc;
 use vulkano::memory::pool::{PotentialDedicatedAllocation, StdMemoryPoolAlloc};
 use vulkano::device::Device;
-use crate::map::vertex::Vertex;
+use crate::world::vertex::Vertex;
 use std::time::Instant;
 
 #[derive(Debug)]
@@ -17,12 +17,12 @@ pub struct Map{
 }
 
 impl Map {
-    pub fn load_from_file(filename: &str) -> Result<Map, &'static str> {
+    pub fn load_from_file(filename: &str, world_scale: f32) -> Result<Map, &'static str> {
         let f = match File::open(filename) {
             Ok(file) => file,
             Err(error) => return match error.kind() {
                 ErrorKind::NotFound => Err("Map file not found."),
-                _ => Err("Could not open map file."),
+                _ => Err("Could not open world file."),
             },
         };
         let file = BufReader::new(&f);
@@ -31,11 +31,11 @@ impl Map {
 
         // Spawn location is first line in file. Parse that first
         let spawn_location = match lines.next() {
-            None => return Err("Problem reading map file."),
+            None => return Err("Problem reading world file."),
             Some(spawn_location) => {
                 match spawn_location {
                     Ok(parse_spawn_coordinates) => Map::parse_as_coordinates(&parse_spawn_coordinates),
-                    Err(_) => return Err("There was a problem reading the map file."),
+                    Err(_) => return Err("There was a problem reading the world file."),
                 }
             },
         };
@@ -63,10 +63,10 @@ impl Map {
                                 .map(|el| el.parse::<u8>().unwrap())
                                 .collect();
 
-                            let new_chunk = Chunk::new(chunk_coords, &line);
+                            let new_chunk = Chunk::new(chunk_coords, &line, world_scale);
                             chunks.insert(chunk_coords, new_chunk);
                         },
-                        None => return Err("Could not parse map file due to formatting!"),
+                        None => return Err("Could not parse world file due to formatting!"),
                     }
                 }
             }
