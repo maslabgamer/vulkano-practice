@@ -1,4 +1,4 @@
 pub mod map;
 pub mod vertex;
-mod chunk;
+pub mod chunk;
 mod cube;

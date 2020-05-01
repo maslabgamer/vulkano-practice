@@ -1,23 +1,28 @@
-use std::io::{BufReader, ErrorKind, BufRead};
 use std::fs::File;
-use std::collections::HashMap;
-use crate::world::chunk::Chunk;
-use vulkano::buffer::BufferUsage;
-use vulkano::buffer::CpuAccessibleBuffer;
-use std::sync::Arc;
-use vulkano::memory::pool::{PotentialDedicatedAllocation, StdMemoryPoolAlloc};
-use vulkano::device::Device;
-use crate::world::vertex::Vertex;
+use std::io::{BufRead, BufReader, ErrorKind};
+use std::sync::{Arc, Mutex};
+use std::thread;
 use std::time::Instant;
 
+use dashmap::DashMap;
+use vulkano::buffer::BufferUsage;
+use vulkano::buffer::CpuAccessibleBuffer;
+use vulkano::device::Device;
+use vulkano::memory::pool::{PotentialDedicatedAllocation, StdMemoryPoolAlloc};
+use crate::world::chunk::Chunk;
+use crate::world::vertex::Vertex;
+use cgmath::Point3;
+use crate::options::InternalConfig;
+
 #[derive(Debug)]
-pub struct Map{
+pub struct Map {
     pub spawn_location: [f32; 3],
-    pub chunks: HashMap<[i32; 3], Chunk>,
+    pub chunks: Arc<DashMap<[i32; 3], Chunk>>,
+    chunk_centers: Arc<Mutex<Vec<Point3<f32>>>>,
 }
 
 impl Map {
-    pub fn load_from_file(filename: &str, world_scale: f32) -> Result<Map, &'static str> {
+    pub fn load_from_file(device: Arc<Device>, filename: &str, world_scale: f32, internal_config: &Arc<InternalConfig>) -> Result<Map, &'static str> {
         let f = match File::open(filename) {
             Ok(file) => file,
             Err(error) => return match error.kind() {
@@ -32,23 +37,25 @@ impl Map {
         // Spawn location is first line in file. Parse that first
         let spawn_location = match lines.next() {
             None => return Err("Problem reading world file."),
-            Some(spawn_location) => {
-                match spawn_location {
-                    Ok(parse_spawn_coordinates) => Map::parse_as_coordinates(&parse_spawn_coordinates),
-                    Err(_) => return Err("There was a problem reading the world file."),
-                }
-            },
+            Some(spawn_location) => match spawn_location {
+                Ok(parse_spawn_coordinates) => Map::parse_as_coordinates(&parse_spawn_coordinates),
+                Err(_) => return Err("There was a problem reading the world file."),
+            }
         };
+
+        let mut handles = vec![];
 
         // Each chunk is 32x32
         // Chunk start denoted by line starting with "c" and a set of coordinates
         // that mark the center of the chunk
         // Following coordinates values are actually attributes for each
-        let mut chunks: HashMap<[i32; 3], Chunk> = HashMap::new();
+        let chunks: Arc<DashMap<[i32; 3], Chunk>> = Arc::new(DashMap::new());
+        let chunk_centers = Arc::new(Mutex::new(vec![]));
+
         let mut chunk_coords: Option<[i32; 3]> = None;
         for line in lines.into_iter() {
             if let Ok(line) = line {
-                let line = Map::strip_comments(&line);
+                let line = Map::strip_comments(&line).to_string();
                 if line.starts_with("c") {
                     let mut line = line.split_ascii_whitespace();
                     line.next();
@@ -59,22 +66,37 @@ impl Map {
                 } else {
                     match chunk_coords {
                         Some(chunk_coords) => {
-                            let line: Vec<u8> = line.split_ascii_whitespace()
-                                .map(|el| el.parse::<u8>().unwrap())
-                                .collect();
+                            let chunks = Arc::clone(&chunks);
+                            let chunk_centers = Arc::clone(&chunk_centers);
+                            let internal_config = Arc::clone(&internal_config);
+                            let device = Arc::clone(&device);
+                            let handle = thread::spawn(move || {
+                                let line: Vec<u8> = line.split_ascii_whitespace()
+                                    .map(|el| el.parse::<u8>().unwrap())
+                                    .collect();
 
-                            let new_chunk = Chunk::new(chunk_coords, &line, world_scale);
-                            chunks.insert(chunk_coords, new_chunk);
-                        },
+                                let new_chunk = Chunk::new(device, chunk_coords, &line, world_scale, &internal_config);
+                                let new_chunk_center = new_chunk.location.clone();
+                                chunks.insert(chunk_coords, new_chunk);
+                                let mut chunk_center = chunk_centers.lock().unwrap();
+                                chunk_center.push(new_chunk_center);
+                            });
+                            handles.push(handle);
+                        }
                         None => return Err("Could not parse world file due to formatting!"),
                     }
                 }
             }
         }
 
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
         Ok(Map {
             spawn_location,
-            chunks
+            chunks,
+            chunk_centers,
         })
     }
 
@@ -91,20 +113,41 @@ impl Map {
 
     // Note: This renders everything
     // May want to play around with more efficiently built algorithms later
-    pub fn render_map(&self, device: &Arc<Device>) -> (Vec<Arc<CpuAccessibleBuffer<[Vertex], PotentialDedicatedAllocation<StdMemoryPoolAlloc>>>>, Vec<Arc<CpuAccessibleBuffer<[u32], PotentialDedicatedAllocation<StdMemoryPoolAlloc>>>>) {
+    pub fn render_map(&self, device: &Arc<Device>) ->
+    (
+        Vec<Arc<CpuAccessibleBuffer<[Vertex],
+            PotentialDedicatedAllocation<StdMemoryPoolAlloc>>>>,
+        Vec<Arc<CpuAccessibleBuffer<[u32],
+            PotentialDedicatedAllocation<StdMemoryPoolAlloc>>>>
+    ) {
         let mut vertex_buffers = vec![];
         let mut index_buffers = vec![];
 
         let start = Instant::now();
-        for chunk in self.chunks.values() {
-            let vertex_buffer = CpuAccessibleBuffer::from_iter(device.clone(), BufferUsage::all(), false, chunk.chunk_vertices.iter().cloned()).unwrap();
+        for chunk in self.chunks.iter() {
+            let vertex_buffer = CpuAccessibleBuffer::from_iter(
+                device.clone(),
+                BufferUsage::all(),
+                false,
+                chunk.chunk_vertices.iter().cloned(),
+            ).unwrap();
             vertex_buffers.push(vertex_buffer);
 
-            let index_buffer = CpuAccessibleBuffer::from_iter(device.clone(), BufferUsage::all(), false, chunk.get_indices().iter().cloned()).unwrap();
+            let index_buffer = CpuAccessibleBuffer::from_iter(
+                device.clone(),
+                BufferUsage::all(),
+                false,
+                chunk.get_indices().iter().cloned(),
+            ).unwrap();
             index_buffers.push(index_buffer);
         }
+
         println!("Marshalling took {:?}", start.elapsed());
 
         (vertex_buffers, index_buffers)
+    }
+
+    pub fn spawn_location_as_point(&self) -> Point3<f32> {
+        Point3::new(self.spawn_location[0], self.spawn_location[1], self.spawn_location[2])
     }
 }

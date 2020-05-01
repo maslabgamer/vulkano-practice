@@ -1,5 +1,10 @@
 use crate::world::vertex::Vertex;
 use crate::world::cube::Cube;
+use cgmath::Point3;
+use crate::options::InternalConfig;
+use std::sync::Arc;
+use vulkano::buffer::{CpuAccessibleBuffer, BufferUsage};
+use vulkano::device::Device;
 
 const CUBES_PER_SIDE: u32 = 32;
 const VERTICES_PER_SIDE: u32 = CUBES_PER_SIDE + 1;
@@ -10,12 +15,14 @@ const DISTANCE_FROM_CENTER: i32 = 20 * 16; // Width of cube times number of cube
 pub struct Chunk {
     pub chunk_attrs: Vec<u8>,
     pub chunk_vertices: Vec<Vertex>,
-    pub chunk_center_coordinates: [f32; 3],
+    pub location: Point3<f32>,
     cubes: Vec<Cube>,
+    pub(crate) collision_detection_distance: f32,
+    vertex_buffer: Arc<CpuAccessibleBuffer<[Vertex]>>
 }
 
 impl Chunk {
-    pub fn new(chunk_coordinates: [i32; 3], chunk_attrs: &Vec<u8>, world_scale: f32) -> Chunk {
+    pub fn new(device: Arc<Device>, chunk_coordinates: [i32; 3], chunk_attrs: &Vec<u8>, world_scale: f32, internal_config: &Arc<InternalConfig>) -> Chunk {
         let x_offset = chunk_coordinates[0] * OFFSET_MULTIPLIER;
         let y_offset = chunk_coordinates[1] * OFFSET_MULTIPLIER;
         let z_offset = chunk_coordinates[2] * OFFSET_MULTIPLIER;
@@ -31,6 +38,7 @@ impl Chunk {
                             (z_vert + z_offset) as f32
                         ],
                         normal: [0.0, 0.0, 0.0],
+                        color_val: [0.0, 1.0, 0.0],
                     })
                 }
             }
@@ -44,15 +52,11 @@ impl Chunk {
         // Remember to keep vertices logged clockwise consistently!
         // There will be 32 triangles of each orientation on each row
         let mut cubes: Vec<Cube> = vec![];
-        // let mut indices: Vec<u32> = Vec::new();
         // For now we're just figuring out the "top" surface
-        // let chunk_to_render = world.chunks.get(&chunk_coordinates).unwrap();
         for tri_layer_idx in 0..CUBES_PER_SIDE {
             for tri_row_idx in 0..CUBES_PER_SIDE {
                 for tri_col_idx in 0..CUBES_PER_SIDE {
-                    // println!("[{}, {}, {}] = {}", tri_layer_idx, tri_row_idx, tri_col_idx, chunk_to_render[CUBES_PER_SIDE * CUBES_PER_SIDE * tri_layer_idx + (tri_col_idx + (CUBES_PER_SIDE * tri_row_idx))]);
                     let chunk_val = chunk_attrs[(CUBES_PER_SIDE * CUBES_PER_SIDE * tri_layer_idx + (tri_col_idx + (CUBES_PER_SIDE * tri_row_idx))) as usize];
-                    // if chunk_val > 0 {
                     // Get indices for current square's vertices on top
                     // first triangle will be first, second and third vertices
                     // Second triangle will be fourth, third, and second vertices
@@ -95,25 +99,37 @@ impl Chunk {
                             // Bottom triangles
                             seventh_idx, fifth_idx, eighth_idx,
                             sixth_idx, eighth_idx, fifth_idx,
-                        ]
+                        ],
                     });
                 }
             }
         }
 
+        let vertex_buffer = CpuAccessibleBuffer::from_iter(
+            device.clone(),
+            BufferUsage::all(),
+            false,
+            chunk_vertices.iter().cloned(),
+        ).expect("Could not create chunk vertex buffer");
+
         Chunk {
             chunk_attrs: chunk_attrs.clone(),
             cubes,
             chunk_vertices,
-            chunk_center_coordinates: [x_offset as f32 * world_scale, y_offset as f32 * world_scale, z_offset as f32 * world_scale]
+            location: Point3::new(x_offset as f32 * world_scale, y_offset as f32 * world_scale, z_offset as f32 * world_scale),
+            collision_detection_distance: DISTANCE_FROM_CENTER as f32 * internal_config.engine.scale * 1.5,
+            vertex_buffer
         }
     }
 
     pub fn get_indices(&self) -> Vec<u32> {
-        let mut indices: Vec<u32> = Vec::with_capacity((CUBES_PER_SIDE * CUBES_PER_SIDE * CUBES_PER_SIDE * 36) as usize);
-        for cube in self.cubes.iter() {
-            indices.extend(&cube.render_vertices());
-        }
-        indices
+        self.cubes.iter().map(|cube| cube.render_vertices())
+            .filter_map(|cube| cube)
+            .flatten()
+            .map(|cube| *cube).collect()
+    }
+
+    pub fn set_chunk_vertex_color(&mut self, r: f32, g: f32, b: f32) {
+        self.chunk_vertices.iter_mut().for_each(|vertex| vertex.set_color_val(r, g, b));
     }
 }

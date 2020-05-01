@@ -18,5 +18,7 @@ toml = "0.5"
 
 cgmath = "0.17"
 
+dashmap = "3.11.1"
+
 [profile.dev]
 opt-level = 3

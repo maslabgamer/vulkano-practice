@@ -3,9 +3,11 @@
 mod world;
 mod options;
 mod player;
+mod object;
 
 use crate::world::map::Map;
 use crate::world::vertex::Vertex;
+use crate::world::chunk::Chunk;
 use crate::player::Player;
 use vulkano::instance::{Instance, PhysicalDevice};
 use vulkano_win::VkSurfaceBuild;
@@ -25,32 +27,27 @@ use vulkano::sync;
 use vulkano::sync::{GpuFuture, FlushError};
 use vulkano::swapchain;
 use winit::event::{WindowEvent, Event};
-use cgmath::{Matrix3, Rad, Matrix4, Point3, Vector3, Vector4};
+use cgmath::{Matrix3, Rad, Matrix4, Vector3, Vector4, Point3};
 use vulkano::descriptor::descriptor_set::PersistentDescriptorSet;
 use vulkano::command_buffer::{AutoCommandBufferBuilder, DynamicState};
 use winit::dpi::{LogicalSize, PhysicalPosition};
 use std::time::Instant;
+use std::collections::HashSet;
 use device_query::{DeviceState, DeviceQuery, Keycode};
 use crate::options::InternalConfig;
+use crate::object::GameObject;
 
 const UP_VECTOR: Vector3<f32> = Vector3::new(0.0, -1.0, 0.0);
 
+game_object![Player, Chunk];
+
 fn main() {
     // Load engine configuration
-    let internal_config: InternalConfig = InternalConfig::load_internal_config("resources/settings.toml");
+    let internal_config: Arc<InternalConfig> = Arc::new(InternalConfig::load_internal_config("resources/settings.toml"));
     println!("internal_config = {:?}", internal_config);
 
     let world_scale = internal_config.engine.scale;
 
-    println!("Loading world...");
-    // Load basic world
-    let map = match Map::load_from_file("resources/map_file.map", world_scale) {
-        Ok(map) => map,
-        Err(e) => panic!("There was a problem loading the world. Can't continue: {}", e),
-    };
-    println!("world keys are: {:?}", map.chunks.keys());
-
-    // Now let's try rendering our basic triangles
     // Get required extensions to draw window
     let required_extensions = vulkano_win::required_extensions();
 
@@ -104,6 +101,18 @@ fn main() {
                        PresentMode::Fifo, FullscreenExclusive::Default, true, ColorSpace::SrgbNonLinear).unwrap()
     };
 
+    // Load the map
+    println!("Loading world...");
+    let world_load_time = Instant::now();
+    // Load basic world
+    let map = match Map::load_from_file(device.clone(), "resources/map_file.map", world_scale, &internal_config) {
+        Ok(map) => map,
+        Err(e) => panic!("There was a problem loading the world. Can't continue: {}", e),
+    };
+    // println!("world keys are: {:?} and {} chunks took {:?} to load.", map.chunks.keys(), map.chunks.len(), world_load_time.elapsed());
+    println!("Map took {:?} to load.", world_load_time.elapsed());
+
+    // Prepare render buffers
     let (vertex_buffers, index_buffers) = map.render_map(&device);
 
     let uniform_buffer = CpuBufferPool::<vertex_shader::ty::Data>::new(device.clone(), BufferUsage::all());
@@ -150,18 +159,12 @@ fn main() {
     let device_state = DeviceState::new();
     let mut input_timer = Instant::now();
 
-    let mut player = Player {
-        location: Point3::new(0.3, 35.0, 25.0),
-        yaw: 0.0,
-        pitch: 0.0
-    };
+    // Set up player
+    let spawn_location = map.spawn_location_as_point();
 
-    let mut view_rotation: Vector4<f32> = Vector4 {
-        x: 0.0,
-        y: 0.0,
-        z: 1.0,
-        w: 1.0
-    };
+    let mut player = Player::new(spawn_location, 0.0, 0.0);
+
+    let mut view_rotation: Vector4<f32> = Vector4 { x: 0.0, y: 0.0, z: 1.0, w: 1.0 };
 
     // Set default position for mouse
     let mut default_mouse_position = PhysicalPosition { x: dimensions[0] / 2, y: dimensions[1] / 2 };
@@ -172,17 +175,15 @@ fn main() {
 
     let mut window_is_focused = true; // Assume focused at startup
 
+    // Set up debug timer for printing debug info
     let mut debug_timer = Instant::now();
 
     // Main game loop
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Poll;
-
-        if debug_timer.elapsed().as_secs() > 1 {
-            println!("player position = {:?}", player.location);
-
-            debug_timer = Instant::now();
-        }
+        // Update delta_time
+        let delta_time = timer.elapsed().as_nanos() as f64 / 1_000_000_000.0;
+        timer = Instant::now();
 
         // Handle input
         if input_timer.elapsed().as_millis() > 5 {
@@ -208,10 +209,27 @@ fn main() {
             }
         }
 
-        // Update delta_time
-        let delta_time = timer.elapsed().as_nanos() as f64 / 1_000_000_000.0;
-        timer = Instant::now();
+        // Calculate distance from player to chunks
+        // let mut player_check_collision_chunks: Vec<([i32; 3], f32)> = vec![];
+        let mut player_check_collision_chunks: HashSet<[i32; 3]> = HashSet::with_capacity(map.chunks.len());
+        for mut chunk in map.chunks.iter_mut() {
+            let distance = player.distance_between(&*chunk);
 
+            // Only need to cehck collision against chunks within a certain radius of the player
+            if distance < chunk.collision_detection_distance {
+                // player_check_collision_chunks.push((chunk.key().clone(), distance));
+                player_check_collision_chunks.insert(chunk.key().clone());
+                chunk.set_chunk_vertex_color(1.0, 0.0, 0.0);
+
+            }
+        }
+
+        // for buffer in vertex_buffers.iter() {
+        //     println!("buffer = {:?}", buffer);
+        // }
+
+
+        // Now check events sent to the window (update view, etc)
         match event {
             Event::WindowEvent { event: WindowEvent::Focused(in_focus), .. } => {
                 window_is_focused = in_focus;
@@ -226,7 +244,7 @@ fn main() {
                     player.pitch += (y_difference * delta_time * sensitivity) as f32;
                     // If I don't do this the world view disappears as it combines poorly with the
                     // "up" vector
-                    // I fucking hate that this works and it's hacky as hell
+                    // I fucking hate that this works and it feels hacky as hell
                     player.pitch = player.pitch.clamp(-(std::f32::consts::FRAC_PI_2 - 0.00001), std::f32::consts::FRAC_PI_2 - 0.00001);
 
                     match surface.window().set_cursor_position(default_mouse_position) {
@@ -320,6 +338,7 @@ fn main() {
                                            [1.0, 1.0, 1.0, 1.0].into(),
                                            1f32.into()
                                        ]).unwrap();
+                // Pass CPU Accessible buffers to command buffer for rendering
                 for (vertex_buffer, index_buffer) in vertex_buffers.iter().zip(index_buffers.iter()) {
                     command_buffer = command_buffer.draw_indexed(
                         pipeline.clone(),
@@ -352,6 +371,14 @@ fn main() {
                 }
             }
             _ => ()
+        }
+
+        // Debug info
+        if debug_timer.elapsed().as_secs() > 1 {
+            println!("player position = {:?}", player.location);
+            println!("player_distance_to_chunks = {:?}", player_check_collision_chunks);
+
+            debug_timer = Instant::now();
         }
     });
 }
