@@ -1,41 +1,43 @@
 #![feature(clamp)]
 
-mod world;
+mod object;
 mod options;
 mod player;
-mod object;
+mod shaders;
+mod world;
 
-use crate::world::map::Map;
-use crate::world::vertex::Vertex;
-use crate::world::chunk::Chunk;
-use crate::player::Player;
-use vulkano::instance::{Instance, PhysicalDevice};
-use vulkano_win::VkSurfaceBuild;
-use winit::event_loop::{EventLoop, ControlFlow};
-use winit::window::{WindowBuilder, Window};
-use vulkano::device::{DeviceExtensions, Device};
-use vulkano::format::Format;
-use vulkano::swapchain::{Swapchain, SurfaceTransform, PresentMode, FullscreenExclusive, ColorSpace, SwapchainCreationError, AcquireError};
-use vulkano::buffer::{BufferUsage, CpuBufferPool};
-use std::sync::Arc;
-use vulkano::image::{SwapchainImage, AttachmentImage};
-use vulkano::pipeline::{GraphicsPipelineAbstract, GraphicsPipeline};
-use vulkano::framebuffer::{FramebufferAbstract, RenderPassAbstract, Framebuffer, Subpass};
-use vulkano::pipeline::viewport::Viewport;
-use std::iter;
-use vulkano::sync;
-use vulkano::sync::{GpuFuture, FlushError};
-use vulkano::swapchain;
-use winit::event::{WindowEvent, Event};
-use cgmath::{Matrix3, Rad, Matrix4, Vector3, Vector4, Point3};
-use vulkano::descriptor::descriptor_set::PersistentDescriptorSet;
-use vulkano::command_buffer::{AutoCommandBufferBuilder, DynamicState};
-use winit::dpi::{LogicalSize, PhysicalPosition};
-use std::time::Instant;
-use std::collections::HashSet;
-use device_query::{DeviceState, DeviceQuery, Keycode};
-use crate::options::InternalConfig;
 use crate::object::GameObject;
+use crate::options::InternalConfig;
+use crate::player::Player;
+use crate::shaders::ShaderType;
+use crate::shaders::Shaders;
+use crate::world::chunk::Chunk;
+use crate::world::map::Map;
+use cgmath::{Matrix3, Matrix4, Point3, Rad, Vector3, Vector4};
+use device_query::{DeviceQuery, DeviceState, Keycode};
+use std::collections::HashSet;
+use std::sync::Arc;
+use std::time::Instant;
+use vulkano::buffer::{BufferUsage, CpuBufferPool};
+use vulkano::command_buffer::{AutoCommandBufferBuilder, DynamicState};
+use vulkano::descriptor::descriptor_set::PersistentDescriptorSet;
+use vulkano::device::{Device, DeviceExtensions};
+use vulkano::format::Format;
+use vulkano::framebuffer::{Framebuffer, FramebufferAbstract, RenderPassAbstract};
+use vulkano::image::{AttachmentImage, SwapchainImage};
+use vulkano::instance::{Instance, PhysicalDevice};
+use vulkano::swapchain;
+use vulkano::swapchain::{
+    AcquireError, ColorSpace, FullscreenExclusive, PresentMode, SurfaceTransform, Swapchain,
+    SwapchainCreationError,
+};
+use vulkano::sync;
+use vulkano::sync::{FlushError, GpuFuture};
+use vulkano_win::VkSurfaceBuild;
+use winit::dpi::{LogicalSize, PhysicalPosition};
+use winit::event::{Event, WindowEvent};
+use winit::event_loop::{ControlFlow, EventLoop};
+use winit::window::{Window, WindowBuilder};
 
 const UP_VECTOR: Vector3<f32> = Vector3::new(0.0, -1.0, 0.0);
 
@@ -43,7 +45,9 @@ game_object![Player, Chunk];
 
 fn main() {
     // Load engine configuration
-    let internal_config: Arc<InternalConfig> = Arc::new(InternalConfig::load_internal_config("resources/settings.toml"));
+    let internal_config: Arc<InternalConfig> = Arc::new(InternalConfig::load_internal_config(
+        "resources/settings.toml",
+    ));
     println!("internal_config = {:?}", internal_config);
 
     let world_scale = internal_config.engine.scale;
@@ -56,12 +60,21 @@ fn main() {
     // Get physical device
     let physical = PhysicalDevice::enumerate(&instance).next().unwrap();
     // Print the device name and type (verifies we've gotten it)
-    println!("Using device: {} (type: {:?})", physical.name(), physical.ty());
+    println!(
+        "Using device: {} (type: {:?})",
+        physical.name(),
+        physical.ty()
+    );
 
     // Create window to actually display shit
     let event_loop = EventLoop::new();
-    let surface = WindowBuilder::new().with_title("ChunkRenderer").build_vk_surface(&event_loop, instance.clone()).unwrap();
-    surface.window().set_inner_size(LogicalSize::new(1920, 1080));
+    let surface = WindowBuilder::new()
+        .with_title("ChunkRenderer")
+        .build_vk_surface(&event_loop, instance.clone())
+        .unwrap();
+    surface
+        .window()
+        .set_inner_size(LogicalSize::new(1920, 1080));
     match surface.window().set_cursor_grab(true) {
         Ok(_) => println!("Got cursor lock on window."),
         Err(_) => panic!("Couldn't get cursor lock on window!"),
@@ -70,15 +83,26 @@ fn main() {
 
     // Pick a GPU queue to execute draw commands
     // Devices can provide multiple queues to execute commands in parallel
-    let queue_family = physical.queue_families().find(|&q| {
-        // Take first queue that supports drawing the window
-        q.supports_graphics() && surface.is_supported(q).unwrap_or(false)
-    }).unwrap();
+    let queue_family = physical
+        .queue_families()
+        .find(|&q| {
+            // Take first queue that supports drawing the window
+            q.supports_graphics() && surface.is_supported(q).unwrap_or(false)
+        })
+        .unwrap();
 
     // Initialize device with required parameters
-    let device_ext = DeviceExtensions { khr_swapchain: true, ..DeviceExtensions::none() };
-    let (device, mut queues) = Device::new(physical, physical.supported_features(), &device_ext,
-                                           [(queue_family, 0.5)].iter().cloned()).unwrap();
+    let device_ext = DeviceExtensions {
+        khr_swapchain: true,
+        ..DeviceExtensions::none()
+    };
+    let (device, mut queues) = Device::new(
+        physical,
+        physical.supported_features(),
+        &device_ext,
+        [(queue_family, 0.5)].iter().cloned(),
+    )
+    .unwrap();
     // Take the first queue and throw the rest away
     let queue = queues.next().unwrap();
 
@@ -96,29 +120,29 @@ fn main() {
         // Choosing the internal format that the images will have
         let format = caps.supported_formats[0].0;
 
-        Swapchain::new(device.clone(), surface.clone(), caps.min_image_count, format,
-                       dimensions, 1, usage, &queue, SurfaceTransform::Identity, alpha,
-                       PresentMode::Fifo, FullscreenExclusive::Default, true, ColorSpace::SrgbNonLinear).unwrap()
+        Swapchain::new(
+            device.clone(),
+            surface.clone(),
+            caps.min_image_count,
+            format,
+            dimensions,
+            1,
+            usage,
+            &queue,
+            SurfaceTransform::Identity,
+            alpha,
+            PresentMode::Fifo,
+            FullscreenExclusive::Default,
+            true,
+            ColorSpace::SrgbNonLinear,
+        )
+        .unwrap()
     };
 
-    // Load the map
-    println!("Loading world...");
-    let world_load_time = Instant::now();
-    // Load basic world
-    let map = match Map::load_from_file(device.clone(), "resources/map_file.map", world_scale, &internal_config) {
-        Ok(map) => map,
-        Err(e) => panic!("There was a problem loading the world. Can't continue: {}", e),
-    };
-    // println!("world keys are: {:?} and {} chunks took {:?} to load.", map.chunks.keys(), map.chunks.len(), world_load_time.elapsed());
-    println!("Map took {:?} to load.", world_load_time.elapsed());
-
-    // Prepare render buffers
-    let (vertex_buffers, index_buffers) = map.render_map(&device);
-
-    let uniform_buffer = CpuBufferPool::<vertex_shader::ty::Data>::new(device.clone(), BufferUsage::all());
+    let uniform_buffer =
+        CpuBufferPool::<vertex_shader::ty::Data>::new(device.clone(), BufferUsage::all());
 
     let vs = vertex_shader::Shader::load(device.clone()).unwrap();
-    let fs = frag_shader::Shader::load(device.clone()).unwrap();
 
     // Do render pass to describe where output of graphics pipeline will go
     let render_pass = Arc::new(
@@ -142,11 +166,13 @@ fn main() {
                 color: [color],
                 depth_stencil: {depth}
             }
-        ).unwrap()
+        )
+        .unwrap(),
     );
 
     // Need to create actual framebuffers
-    let (mut pipeline, mut framebuffers) = window_size_dependent_setup(device.clone(), &vs, &fs, &images, render_pass.clone());
+    let (mut pipelines, mut framebuffers) =
+        window_size_dependent_setup(device.clone(), &vs, &images, render_pass.clone());
 
     // Flag swapchain recreation in case window is resized
     let mut recreate_swapchain = false;
@@ -155,19 +181,46 @@ fn main() {
     // Hold a place to store the submission of the previous frame
     let mut previous_frame_end = Some(Box::new(sync::now(device.clone())) as Box<dyn GpuFuture>);
 
-    // Set up keybaord handler
+    // Set up keyboard handler
     let device_state = DeviceState::new();
     let mut input_timer = Instant::now();
+
+    // ! Load the map
+    println!("Loading world...");
+    let world_load_time = Instant::now();
+    // Load basic world
+    let map = match Map::load_from_file(
+        device.clone(),
+        "resources/map_file.map",
+        world_scale,
+        &internal_config,
+        pipelines.shaders.get(&ShaderType::Default).unwrap().clone(),
+    ) {
+        Ok(map) => map,
+        Err(e) => panic!(
+            "There was a problem loading the world. Can't continue: {}",
+            e
+        ),
+    };
+    println!("Map took {:?} to load.", world_load_time.elapsed());
 
     // Set up player
     let spawn_location = map.spawn_location_as_point();
 
     let mut player = Player::new(spawn_location, 0.0, 0.0);
 
-    let mut view_rotation: Vector4<f32> = Vector4 { x: 0.0, y: 0.0, z: 1.0, w: 1.0 };
+    let mut view_rotation: Vector4<f32> = Vector4 {
+        x: 0.0,
+        y: 0.0,
+        z: 1.0,
+        w: 1.0,
+    };
 
     // Set default position for mouse
-    let mut default_mouse_position = PhysicalPosition { x: dimensions[0] / 2, y: dimensions[1] / 2 };
+    let mut default_mouse_position = PhysicalPosition {
+        x: dimensions[0] / 2,
+        y: dimensions[1] / 2,
+    };
     let sensitivity = 1.3;
 
     // Set up elapsed time timer
@@ -202,7 +255,7 @@ fn main() {
                         Keycode::D => player.location += right,
                         Keycode::Space => player.move_up(0.5),
                         Keycode::LShift => player.move_down(0.5),
-                        _ => {},
+                        _ => {}
                     }
                 }
                 input_timer = Instant::now();
@@ -211,7 +264,8 @@ fn main() {
 
         // Calculate distance from player to chunks
         // let mut player_check_collision_chunks: Vec<([i32; 3], f32)> = vec![];
-        let mut player_check_collision_chunks: HashSet<[i32; 3]> = HashSet::with_capacity(map.chunks.len());
+        let mut player_check_collision_chunks: HashSet<[i32; 3]> =
+            HashSet::with_capacity(map.chunks.len());
         for mut chunk in map.chunks.iter_mut() {
             let distance = player.distance_between(&*chunk);
 
@@ -219,23 +273,25 @@ fn main() {
             if distance < chunk.collision_detection_distance {
                 // player_check_collision_chunks.push((chunk.key().clone(), distance));
                 player_check_collision_chunks.insert(chunk.key().clone());
-                chunk.set_chunk_vertex_color(1.0, 0.0, 0.0);
-
+                chunk.set_shader(pipelines.shaders.get(&ShaderType::CollisionCheck).unwrap().clone());
+            } else {
+                chunk.set_shader(pipelines.shaders.get(&ShaderType::Default).unwrap().clone())
             }
         }
 
-        // for buffer in vertex_buffers.iter() {
-        //     println!("buffer = {:?}", buffer);
-        // }
-
-
         // Now check events sent to the window (update view, etc)
         match event {
-            Event::WindowEvent { event: WindowEvent::Focused(in_focus), .. } => {
+            Event::WindowEvent {
+                event: WindowEvent::Focused(in_focus),
+                ..
+            } => {
                 window_is_focused = in_focus;
                 surface.window().set_cursor_visible(!window_is_focused);
             }
-            Event::WindowEvent { event: WindowEvent::CursorMoved { position, .. }, .. } => {
+            Event::WindowEvent {
+                event: WindowEvent::CursorMoved { position, .. },
+                ..
+            } => {
                 if window_is_focused {
                     let x_difference = position.x - default_mouse_position.x as f64;
                     let y_difference = position.y - default_mouse_position.y as f64;
@@ -245,18 +301,26 @@ fn main() {
                     // If I don't do this the world view disappears as it combines poorly with the
                     // "up" vector
                     // I fucking hate that this works and it feels hacky as hell
-                    player.pitch = player.pitch.clamp(-(std::f32::consts::FRAC_PI_2 - 0.00001), std::f32::consts::FRAC_PI_2 - 0.00001);
+                    player.pitch = player.pitch.clamp(
+                        -(std::f32::consts::FRAC_PI_2 - 0.00001),
+                        std::f32::consts::FRAC_PI_2 - 0.00001,
+                    );
 
-                    match surface.window().set_cursor_position(default_mouse_position) {
-                        Ok(_) => {}
-                        Err(_) => panic!("Could not set cursor position!"),
+                    if let Err(_) = surface.window().set_cursor_position(default_mouse_position) {
+                        panic!("Could not set cursor position!");
                     }
                 }
             }
-            Event::WindowEvent { event: WindowEvent::CloseRequested, .. } => {
+            Event::WindowEvent {
+                event: WindowEvent::CloseRequested,
+                ..
+            } => {
                 *control_flow = ControlFlow::Exit;
             }
-            Event::WindowEvent { event: WindowEvent::Resized(_), .. } => {
+            Event::WindowEvent {
+                event: WindowEvent::Resized(_),
+                ..
+            } => {
                 recreate_swapchain = true;
             }
             Event::RedrawEventsCleared => {
@@ -266,25 +330,55 @@ fn main() {
                 // Whenever window resizes we need to recreate everything dependent on the window size.
                 if recreate_swapchain {
                     let dimensions: [u32; 2] = surface.window().inner_size().into();
-                    default_mouse_position = PhysicalPosition { x: dimensions[0] / 2, y: dimensions[1] / 2 };
-                    let (new_swapchain, new_images) = match swapchain.recreate_with_dimensions(dimensions) {
-                        Ok(r) => r,
-                        Err(SwapchainCreationError::UnsupportedDimensions) => return,
-                        Err(e) => panic!("Failed to recreate swapchain: {:?}", e)
+                    default_mouse_position = PhysicalPosition {
+                        x: dimensions[0] / 2,
+                        y: dimensions[1] / 2,
                     };
+                    let (new_swapchain, new_images) =
+                        match swapchain.recreate_with_dimensions(dimensions) {
+                            Ok(r) => r,
+                            Err(SwapchainCreationError::UnsupportedDimensions) => return,
+                            Err(e) => panic!("Failed to recreate swapchain: {:?}", e),
+                        };
 
                     swapchain = new_swapchain;
-                    let (new_pipeline, new_framebuffers) = window_size_dependent_setup(device.clone(), &vs, &fs, &new_images, render_pass.clone());
-                    pipeline = new_pipeline;
+                    let (new_pipelines, new_framebuffers) = window_size_dependent_setup(
+                        device.clone(),
+                        &vs,
+                        &new_images,
+                        render_pass.clone(),
+                    );
+                    pipelines = new_pipelines;
                     framebuffers = new_framebuffers;
                     recreate_swapchain = false;
+                }
+
+                // Have to acquire an images from the swapchain before we can draw it
+                let (image_num, suboptimal, acquire_future) =
+                    match swapchain::acquire_next_image(swapchain.clone(), None) {
+                        Ok(r) => r,
+                        Err(AcquireError::OutOfDate) => {
+                            recreate_swapchain = true;
+                            return;
+                        }
+                        Err(e) => panic!("Failed to acquire next image: {:?}", e),
+                    };
+
+                // if suboptimal, recreate the swapchain
+                if suboptimal {
+                    recreate_swapchain = true;
                 }
 
                 let uniform_buffer_subbuffer = {
                     let rotation = Matrix3::from_angle_y(Rad(0.0));
 
                     let aspect_ratio = dimensions[0] as f32 / dimensions[1] as f32;
-                    let proj = cgmath::perspective(Rad(std::f32::consts::FRAC_PI_2), aspect_ratio, 0.01, 1000.0);
+                    let proj = cgmath::perspective(
+                        Rad(std::f32::consts::FRAC_PI_2),
+                        aspect_ratio,
+                        0.01,
+                        1000.0,
+                    );
 
                     // Create our rotation matrices
                     let horizontal_rotation = Matrix4::from_angle_y(Rad(player.yaw));
@@ -297,7 +391,8 @@ fn main() {
                     // Multiply target by the rotation vector.
                     view_rotation = camera_rotation * target;
 
-                    let view = Matrix4::look_at_dir(player.location, view_rotation.truncate(), UP_VECTOR);
+                    let view =
+                        Matrix4::look_at_dir(player.location, view_rotation.truncate(), UP_VECTOR);
 
                     let scale = Matrix4::from_scale(world_scale);
 
@@ -307,59 +402,57 @@ fn main() {
                         proj: proj.into(),
                     };
 
-                    uniform_buffer.next(uniform_data).unwrap()
+                    Arc::new(uniform_buffer.next(uniform_data).unwrap())
                 };
-
-                let layout = pipeline.descriptor_set_layout(0).unwrap();
-                let set = Arc::new(PersistentDescriptorSet::start(layout.clone())
-                    .add_buffer(uniform_buffer_subbuffer).unwrap()
-                    .build().unwrap()
-                );
-
-                // Have to acquire an images from the swapchain before we can draw it
-                let (image_num, suboptimal, acquire_future) = match swapchain::acquire_next_image(swapchain.clone(), None) {
-                    Ok(r) => r,
-                    Err(AcquireError::OutOfDate) => {
-                        recreate_swapchain = true;
-                        return;
-                    }
-                    Err(e) => panic!("Failed to acquire next image: {:?}", e)
-                };
-
-                // if suboptimal, recreate the swapchain
-                if suboptimal {
-                    recreate_swapchain = true;
-                }
 
                 // Have to build a command buffer in order to draw
-                let mut command_buffer = AutoCommandBufferBuilder::primary_one_time_submit(device.clone(), queue.family()).unwrap()
-                    .begin_render_pass(framebuffers[image_num].clone(), false,
-                                       vec![
-                                           [1.0, 1.0, 1.0, 1.0].into(),
-                                           1f32.into()
-                                       ]).unwrap();
-                // Pass CPU Accessible buffers to command buffer for rendering
-                for (vertex_buffer, index_buffer) in vertex_buffers.iter().zip(index_buffers.iter()) {
-                    command_buffer = command_buffer.draw_indexed(
-                        pipeline.clone(),
-                        &DynamicState::none(),
-                        vec!(vertex_buffer.clone()),
-                        index_buffer.clone(), set.clone(), (),
-                    ).unwrap();
-                }
-                let command_buffer = command_buffer.end_render_pass().unwrap()
-                    .build().unwrap();
+                let mut command_buffer = AutoCommandBufferBuilder::primary_one_time_submit(
+                    device.clone(),
+                    queue.family(),
+                )
+                .unwrap()
+                .begin_render_pass(
+                    framebuffers[image_num].clone(),
+                    false,
+                    vec![[0.0, 0.0, 0.0, 1.0].into(), 1f32.into()],
+                )
+                .unwrap();
+                // Iterate through chunks to render
+                for chunk in map.chunks.iter() {
+                    let layout = chunk.shader_pipeline.descriptor_set_layout(0).unwrap();
+                    let set = Arc::new(
+                        PersistentDescriptorSet::start(layout.clone())
+                            .add_buffer(uniform_buffer_subbuffer.clone())
+                            .unwrap()
+                            .build()
+                            .unwrap(),
+                    );
 
-                let future = previous_frame_end.take().unwrap()
+                    command_buffer = command_buffer
+                        .draw_indexed(
+                            chunk.shader_pipeline.clone(),
+                            &DynamicState::none(),
+                            vec![chunk.vertex_buffer.clone()],
+                            chunk.index_buffer.clone(),
+                            set.clone(),
+                            (),
+                        )
+                        .unwrap();
+                }
+                let command_buffer = command_buffer.end_render_pass().unwrap().build().unwrap();
+                // End render pass
+
+                let future = previous_frame_end
+                    .take()
+                    .unwrap()
                     .join(acquire_future)
-                    .then_execute(queue.clone(), command_buffer).unwrap()
+                    .then_execute(queue.clone(), command_buffer)
+                    .unwrap()
                     .then_swapchain_present(queue.clone(), swapchain.clone(), image_num)
                     .then_signal_fence_and_flush();
 
                 match future {
-                    Ok(future) => {
-                        previous_frame_end = Some(Box::new(future) as Box<_>)
-                    }
+                    Ok(future) => previous_frame_end = Some(Box::new(future) as Box<_>),
                     Err(FlushError::OutOfDate) => {
                         recreate_swapchain = true;
                         previous_frame_end = Some(Box::new(sync::now(device.clone())) as Box<_>)
@@ -370,13 +463,16 @@ fn main() {
                     }
                 }
             }
-            _ => ()
+            _ => (),
         }
 
         // Debug info
         if debug_timer.elapsed().as_secs() > 1 {
             println!("player position = {:?}", player.location);
-            println!("player_distance_to_chunks = {:?}", player_check_collision_chunks);
+            println!(
+                "player_distance_to_chunks = {:?}",
+                player_check_collision_chunks
+            );
 
             debug_timer = Instant::now();
         }
@@ -387,54 +483,43 @@ fn main() {
 fn window_size_dependent_setup(
     device: Arc<Device>,
     vs: &vertex_shader::Shader,
-    fs: &frag_shader::Shader,
     images: &[Arc<SwapchainImage<Window>>],
     render_pass: Arc<dyn RenderPassAbstract + Send + Sync>,
-) -> (Arc<dyn GraphicsPipelineAbstract + Send + Sync>, Vec<Arc<dyn FramebufferAbstract + Send + Sync>>) {
+) -> (Shaders, Vec<Arc<dyn FramebufferAbstract + Send + Sync>>) {
     let dimensions = images[0].dimensions();
 
-    let depth_buffer = AttachmentImage::transient(device.clone(), dimensions, Format::D16Unorm).unwrap();
+    let depth_buffer =
+        AttachmentImage::transient(device.clone(), dimensions, Format::D16Unorm).unwrap();
 
-    let framebuffers = images.iter().map(|image| {
-        Arc::new(
-            Framebuffer::start(render_pass.clone())
-                .add(image.clone()).unwrap()
-                .add(depth_buffer.clone()).unwrap()
-                .build().unwrap()
-        ) as Arc<dyn FramebufferAbstract + Send + Sync>
-    }).collect::<Vec<_>>();
+    let framebuffers = images
+        .iter()
+        .map(|image| {
+            Arc::new(
+                Framebuffer::start(render_pass.clone())
+                    .add(image.clone())
+                    .unwrap()
+                    .add(depth_buffer.clone())
+                    .unwrap()
+                    .build()
+                    .unwrap(),
+            ) as Arc<dyn FramebufferAbstract + Send + Sync>
+        })
+        .collect::<Vec<_>>();
 
-    let pipeline = Arc::new(GraphicsPipeline::start()
-        .vertex_input_single_buffer::<Vertex>()
-        .vertex_shader(vs.main_entry_point(), ())
-        .triangle_list()
-        .viewports_dynamic_scissors_irrelevant(1)
-        .viewports(iter::once(Viewport {
-            origin: [0.0, 0.0],
-            dimensions: [dimensions[0] as f32, dimensions[1] as f32],
-            depth_range: 0.0..1.0,
-        }))
-        .fragment_shader(fs.main_entry_point(), ())
-        .depth_stencil_simple_depth()
-        .render_pass(Subpass::from(render_pass.clone(), 0).unwrap())
-        .build(device.clone())
-        .unwrap()
+    let pipelines = Shaders::load_shaders(
+        device.clone(),
+        [dimensions[0], dimensions[1]],
+        render_pass.clone(),
+        &vs,
     );
 
-    (pipeline, framebuffers)
+    (pipelines, framebuffers)
 }
 
 // Create the shaders
 mod vertex_shader {
     vulkano_shaders::shader! {
         ty: "vertex",
-        path: "resources/shaders/vert.glsl"
-    }
-}
-
-mod frag_shader {
-    vulkano_shaders::shader! {
-        ty: "fragment",
-        path: "resources/shaders/frag.glsl"
+        path: "resources/shaders/chunk.vs"
     }
 }

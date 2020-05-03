@@ -2,27 +2,27 @@ use std::fs::File;
 use std::io::{BufRead, BufReader, ErrorKind};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Instant;
 
 use dashmap::DashMap;
-use vulkano::buffer::BufferUsage;
-use vulkano::buffer::CpuAccessibleBuffer;
 use vulkano::device::Device;
-use vulkano::memory::pool::{PotentialDedicatedAllocation, StdMemoryPoolAlloc};
 use crate::world::chunk::Chunk;
-use crate::world::vertex::Vertex;
 use cgmath::Point3;
 use crate::options::InternalConfig;
+use vulkano::pipeline::GraphicsPipelineAbstract;
 
-#[derive(Debug)]
 pub struct Map {
     pub spawn_location: [f32; 3],
     pub chunks: Arc<DashMap<[i32; 3], Chunk>>,
-    chunk_centers: Arc<Mutex<Vec<Point3<f32>>>>,
 }
 
 impl Map {
-    pub fn load_from_file(device: Arc<Device>, filename: &str, world_scale: f32, internal_config: &Arc<InternalConfig>) -> Result<Map, &'static str> {
+    pub fn load_from_file(
+        device: Arc<Device>, 
+        filename: &str, 
+        world_scale: f32, 
+        internal_config: &Arc<InternalConfig>, 
+        default_shader: Arc<dyn GraphicsPipelineAbstract + Send + Sync>,
+    ) -> Result<Map, &'static str> {
         let f = match File::open(filename) {
             Ok(file) => file,
             Err(error) => return match error.kind() {
@@ -70,12 +70,20 @@ impl Map {
                             let chunk_centers = Arc::clone(&chunk_centers);
                             let internal_config = Arc::clone(&internal_config);
                             let device = Arc::clone(&device);
+                            let default_shader = Arc::clone(&default_shader);
                             let handle = thread::spawn(move || {
                                 let line: Vec<u8> = line.split_ascii_whitespace()
                                     .map(|el| el.parse::<u8>().unwrap())
                                     .collect();
 
-                                let new_chunk = Chunk::new(device, chunk_coords, &line, world_scale, &internal_config);
+                                let new_chunk = Chunk::new(
+                                    device, 
+                                    chunk_coords, 
+                                    &line,
+                                     world_scale, 
+                                     &internal_config, 
+                                     default_shader.clone(),
+                                );
                                 let new_chunk_center = new_chunk.location.clone();
                                 chunks.insert(chunk_coords, new_chunk);
                                 let mut chunk_center = chunk_centers.lock().unwrap();
@@ -96,7 +104,6 @@ impl Map {
         Ok(Map {
             spawn_location,
             chunks,
-            chunk_centers,
         })
     }
 
@@ -109,42 +116,6 @@ impl Map {
 
     fn strip_comments(line: &str) -> &str {
         line.split("#").next().unwrap().trim()
-    }
-
-    // Note: This renders everything
-    // May want to play around with more efficiently built algorithms later
-    pub fn render_map(&self, device: &Arc<Device>) ->
-    (
-        Vec<Arc<CpuAccessibleBuffer<[Vertex],
-            PotentialDedicatedAllocation<StdMemoryPoolAlloc>>>>,
-        Vec<Arc<CpuAccessibleBuffer<[u32],
-            PotentialDedicatedAllocation<StdMemoryPoolAlloc>>>>
-    ) {
-        let mut vertex_buffers = vec![];
-        let mut index_buffers = vec![];
-
-        let start = Instant::now();
-        for chunk in self.chunks.iter() {
-            let vertex_buffer = CpuAccessibleBuffer::from_iter(
-                device.clone(),
-                BufferUsage::all(),
-                false,
-                chunk.chunk_vertices.iter().cloned(),
-            ).unwrap();
-            vertex_buffers.push(vertex_buffer);
-
-            let index_buffer = CpuAccessibleBuffer::from_iter(
-                device.clone(),
-                BufferUsage::all(),
-                false,
-                chunk.get_indices().iter().cloned(),
-            ).unwrap();
-            index_buffers.push(index_buffer);
-        }
-
-        println!("Marshalling took {:?}", start.elapsed());
-
-        (vertex_buffers, index_buffers)
     }
 
     pub fn spawn_location_as_point(&self) -> Point3<f32> {
