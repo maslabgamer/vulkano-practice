@@ -1,4 +1,4 @@
-use std::ops::{Sub, Add};
+use std::ops::{Add, Sub};
 
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct Vertex {
@@ -13,7 +13,11 @@ impl Sub for Vertex {
 
     fn sub(self, rhs: Self) -> Self::Output {
         Vertex {
-            position: [self.position[0] - rhs.position[0], self.position[1] - rhs.position[1], self.position[2] - rhs.position[2]],
+            position: [
+                self.position[0] - rhs.position[0],
+                self.position[1] - rhs.position[1],
+                self.position[2] - rhs.position[2],
+            ],
             normal: [0.0; 3],
         }
     }
@@ -24,7 +28,11 @@ impl Add for Vertex {
 
     fn add(self, rhs: Self) -> Self::Output {
         Vertex {
-            position: [self.position[0] + rhs.position[0], self.position[1] + rhs.position[1], self.position[2] + rhs.position[2]],
+            position: [
+                self.position[0] + rhs.position[0],
+                self.position[1] + rhs.position[1],
+                self.position[2] + rhs.position[2],
+            ],
             normal: [0.0; 3],
         }
     }

@@ -7,9 +7,9 @@ pub trait GameObject {
 
     fn distance_between(&self, other: &dyn GameObject) -> f32 {
         f32::sqrt(
-            (other.location().x - self.location().x).powi(2) +
-                (other.location().y - self.location().y).powi(2) +
-                (other.location().z - self.location().z).powi(2)
+            (other.location().x - self.location().x).powi(2)
+                + (other.location().y - self.location().y).powi(2)
+                + (other.location().z - self.location().z).powi(2),
         )
     }
 }

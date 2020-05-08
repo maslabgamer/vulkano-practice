@@ -273,7 +273,13 @@ fn main() {
             if distance < chunk.collision_detection_distance {
                 // player_check_collision_chunks.push((chunk.key().clone(), distance));
                 player_check_collision_chunks.insert(chunk.key().clone());
-                chunk.set_shader(pipelines.shaders.get(&ShaderType::CollisionCheck).unwrap().clone());
+                chunk.set_shader(
+                    pipelines
+                        .shaders
+                        .get(&ShaderType::CollisionCheck)
+                        .unwrap()
+                        .clone(),
+                );
             } else {
                 chunk.set_shader(pipelines.shaders.get(&ShaderType::Default).unwrap().clone())
             }

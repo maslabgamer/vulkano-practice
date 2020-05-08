@@ -5,7 +5,7 @@ pub(crate) struct Player {
     // pub(crate) previous_location: Point3<f32>,
     pub(crate) yaw: f32,
     pub(crate) pitch: f32,
-    pub(crate) collision_detection_distance: f32
+    pub(crate) collision_detection_distance: f32,
 }
 
 impl Player {
@@ -15,7 +15,7 @@ impl Player {
             // previous_location: spawn_location,
             yaw,
             pitch,
-            collision_detection_distance: 1.0
+            collision_detection_distance: 1.0,
         }
     }
 

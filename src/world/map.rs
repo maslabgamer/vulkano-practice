@@ -3,11 +3,11 @@ use std::io::{BufRead, BufReader, ErrorKind};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-use dashmap::DashMap;
-use vulkano::device::Device;
+use crate::options::InternalConfig;
 use crate::world::chunk::Chunk;
 use cgmath::Point3;
-use crate::options::InternalConfig;
+use dashmap::DashMap;
+use vulkano::device::Device;
 use vulkano::pipeline::GraphicsPipelineAbstract;
 
 pub struct Map {
@@ -17,18 +17,20 @@ pub struct Map {
 
 impl Map {
     pub fn load_from_file(
-        device: Arc<Device>, 
-        filename: &str, 
-        world_scale: f32, 
-        internal_config: &Arc<InternalConfig>, 
+        device: Arc<Device>,
+        filename: &str,
+        world_scale: f32,
+        internal_config: &Arc<InternalConfig>,
         default_shader: Arc<dyn GraphicsPipelineAbstract + Send + Sync>,
     ) -> Result<Map, &'static str> {
         let f = match File::open(filename) {
             Ok(file) => file,
-            Err(error) => return match error.kind() {
-                ErrorKind::NotFound => Err("Map file not found."),
-                _ => Err("Could not open world file."),
-            },
+            Err(error) => {
+                return match error.kind() {
+                    ErrorKind::NotFound => Err("Map file not found."),
+                    _ => Err("Could not open world file."),
+                }
+            }
         };
         let file = BufReader::new(&f);
 
@@ -40,7 +42,7 @@ impl Map {
             Some(spawn_location) => match spawn_location {
                 Ok(parse_spawn_coordinates) => Map::parse_as_coordinates(&parse_spawn_coordinates),
                 Err(_) => return Err("There was a problem reading the world file."),
-            }
+            },
         };
 
         let mut handles = vec![];
@@ -59,7 +61,10 @@ impl Map {
                 if line.starts_with("c") {
                     let mut line = line.split_ascii_whitespace();
                     line.next();
-                    let chunk_location: Vec<i32> = line.into_iter().map(|el| el.parse::<i32>().unwrap()).collect();
+                    let chunk_location: Vec<i32> = line
+                        .into_iter()
+                        .map(|el| el.parse::<i32>().unwrap())
+                        .collect();
                     let chunk_location = [chunk_location[0], chunk_location[1], chunk_location[2]];
 
                     chunk_coords = Some(chunk_location);
@@ -72,17 +77,18 @@ impl Map {
                             let device = Arc::clone(&device);
                             let default_shader = Arc::clone(&default_shader);
                             let handle = thread::spawn(move || {
-                                let line: Vec<u8> = line.split_ascii_whitespace()
+                                let line: Vec<u8> = line
+                                    .split_ascii_whitespace()
                                     .map(|el| el.parse::<u8>().unwrap())
                                     .collect();
 
                                 let new_chunk = Chunk::new(
-                                    device, 
-                                    chunk_coords, 
+                                    device,
+                                    chunk_coords,
                                     &line,
-                                     world_scale, 
-                                     &internal_config, 
-                                     default_shader.clone(),
+                                    world_scale,
+                                    &internal_config,
+                                    default_shader.clone(),
                                 );
                                 let new_chunk_center = new_chunk.location.clone();
                                 chunks.insert(chunk_coords, new_chunk);
@@ -109,8 +115,10 @@ impl Map {
 
     fn parse_as_coordinates(line: &str) -> [f32; 3] {
         let line = Map::strip_comments(line);
-        let line: Vec<f32> = line.split_ascii_whitespace()
-            .map(|e| e.parse::<f32>().unwrap()).collect();
+        let line: Vec<f32> = line
+            .split_ascii_whitespace()
+            .map(|e| e.parse::<f32>().unwrap())
+            .collect();
         [line[0], line[1], line[2]]
     }
 
@@ -119,6 +127,10 @@ impl Map {
     }
 
     pub fn spawn_location_as_point(&self) -> Point3<f32> {
-        Point3::new(self.spawn_location[0], self.spawn_location[1], self.spawn_location[2])
+        Point3::new(
+            self.spawn_location[0],
+            self.spawn_location[1],
+            self.spawn_location[2],
+        )
     }
 }
