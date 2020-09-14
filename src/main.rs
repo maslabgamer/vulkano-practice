@@ -102,7 +102,7 @@ fn main() {
         &device_ext,
         [(queue_family, 0.5)].iter().cloned(),
     )
-    .unwrap();
+        .unwrap();
     // Take the first queue and throw the rest away
     let queue = queues.next().unwrap();
 
@@ -136,7 +136,7 @@ fn main() {
             true,
             ColorSpace::SrgbNonLinear,
         )
-        .unwrap()
+            .unwrap()
     };
 
     let uniform_buffer =
@@ -167,7 +167,7 @@ fn main() {
                 depth_stencil: {depth}
             }
         )
-        .unwrap(),
+            .unwrap(),
     );
 
     // Need to create actual framebuffers
@@ -416,13 +416,13 @@ fn main() {
                     device.clone(),
                     queue.family(),
                 )
-                .unwrap()
-                .begin_render_pass(
+                    .unwrap();
+                command_buffer.begin_render_pass(
                     framebuffers[image_num].clone(),
                     false,
                     vec![[0.0, 0.0, 0.0, 1.0].into(), 1f32.into()],
                 )
-                .unwrap();
+                    .unwrap();
                 // Iterate through chunks to render
                 for chunk in map.chunks.iter() {
                     let layout = chunk.shader_pipeline.descriptor_set_layout(0).unwrap();
@@ -434,7 +434,7 @@ fn main() {
                             .unwrap(),
                     );
 
-                    command_buffer = command_buffer
+                    command_buffer
                         .draw_indexed(
                             chunk.shader_pipeline.clone(),
                             &DynamicState::none(),
@@ -445,7 +445,8 @@ fn main() {
                         )
                         .unwrap();
                 }
-                let command_buffer = command_buffer.end_render_pass().unwrap().build().unwrap();
+                command_buffer.end_render_pass().unwrap();
+                let command_buffer = command_buffer.build().unwrap();
                 // End render pass
 
                 let future = previous_frame_end
